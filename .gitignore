@@ -1,0 +1,11 @@
+.tools/
+external/
+build*/
+dist/
+romfs/signing.key
+*.nro
+*.elf
+*.nacp
+*.map
+__pycache__/
+client-id

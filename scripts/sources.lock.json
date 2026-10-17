@@ -1,0 +1,65 @@
+[
+  {
+    "name": "libdatachannel",
+    "repo": "paullouisageneau/libdatachannel",
+    "ref": "9e6a13abbb6846c003d817d0387b6706466e2b03",
+    "sha256": "3bf5a6bdc605277c2b1f185429e86660b895fa09da21ce6db923beca964c2222",
+    "path": "libdatachannel"
+  },
+  {
+    "name": "mbedtls",
+    "repo": "Mbed-TLS/mbedtls",
+    "ref": "v3.6.4",
+    "sha256": "a1e01f6094bb744ead8caaa92d7c7102b7137a813f509b49afaebc0b8e51899c",
+    "path": "mbedtls"
+  },
+  {
+    "name": "json",
+    "repo": "nlohmann/json",
+    "ref": "v3.11.3",
+    "sha256": "0d8ef5af7f9794e3263480193c491549b2ba6cc74bb018906202ada498a79406",
+    "path": "json"
+  },
+  {
+    "name": "qrcodegen",
+    "repo": "nayuki/QR-Code-generator",
+    "ref": "v1.8.0",
+    "sha256": "2ec0a4d33d6f521c942eeaf473d42d5fe139abcfa57d2beffe10c5cf7d34ae60",
+    "path": "qrcodegen"
+  },
+  {
+    "name": "libjuice",
+    "repo": "paullouisageneau/libjuice",
+    "ref": "b509b6c1f90e4a1d4753e6bde62ffbeb4d10c6bb",
+    "sha256": "770eb342b98e029b74de95a3078499184093a1e382e8cba12eaab3cbc91a85bd",
+    "path": "libdatachannel/deps/libjuice"
+  },
+  {
+    "name": "plog",
+    "repo": "SergiusTheBest/plog",
+    "ref": "94899e0b926ac1b0f4750bfbd495167b4a6ae9ef",
+    "sha256": "92a08bce559b5f28aa88d3fd9071567414b9f43a83fe2a05a6dd14f1da536072",
+    "path": "libdatachannel/deps/plog"
+  },
+  {
+    "name": "usrsctp",
+    "repo": "paullouisageneau/usrsctp",
+    "ref": "fec583d54493f879d2ae44a743423bf8a04371ab",
+    "sha256": "e5c114afe73c9a0ec419fab5f5b3f63f3ce57b09b90d06ea85e63dca8aed3e7c",
+    "path": "libdatachannel/deps/usrsctp"
+  },
+  {
+    "name": "libsrtp",
+    "repo": "cisco/libsrtp",
+    "ref": "ee1a77c9f9dc02c42bda9901038c500c5efe4cfa",
+    "sha256": "635cf337ddb9a774b5c7fa453c175f3e666bf436bd3767352c0f46676b659dda",
+    "path": "libdatachannel/deps/libsrtp"
+  },
+  {
+    "name": "mbedtls-framework",
+    "repo": "Mbed-TLS/mbedtls-framework",
+    "ref": "2a3e2c5ea053c14b745dbdf41f609b1edc6a72fa",
+    "sha256": "f5934ffcad4c32a95f9281f0f95908eb471ee34df721fb9d6ad4adb9567f6b61",
+    "path": "mbedtls/framework"
+  }
+]

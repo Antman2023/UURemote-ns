@@ -1,0 +1,140 @@
+[
+  {
+    "name": "devkitA64",
+    "version": "r30-1",
+    "url": "https://pkg.devkitpro.org/packages/devkitA64-r30-1-any.pkg.tar.zst?x=1",
+    "sha256": "66f100490dafe506495ee083bc932aa2c2f231b5dafaa2b203d1832389b700e9"
+  },
+  {
+    "name": "devkita64-binutils",
+    "version": "2.46.0-1",
+    "url": "https://pkg.devkitpro.org/packages/windows/x86_64/devkita64-binutils-2.46.0-1-x86_64.pkg.tar.zst?x=1",
+    "sha256": "c516a70a31521b61e18759669c6f5c6718796a6cbb0b3c1c023a2ac418f79988"
+  },
+  {
+    "name": "devkita64-cmake",
+    "version": "1.1.3-1",
+    "url": "https://pkg.devkitpro.org/packages/devkita64-cmake-1.1.3-1-any.pkg.tar.zst?x=1",
+    "sha256": "f2baa41f2b776ea5e7c5340464d2ba1bcccbc73a96c3293c91ae13df9ee5d467"
+  },
+  {
+    "name": "devkita64-gcc",
+    "version": "16.1.0-1",
+    "url": "https://pkg.devkitpro.org/packages/windows/x86_64/devkita64-gcc-16.1.0-1-x86_64.pkg.tar.zst?x=1",
+    "sha256": "4ccf7ee6f3d85248f3b58708e44aa3e9f777479ff90cd4409a95862752e85400"
+  },
+  {
+    "name": "devkita64-newlib",
+    "version": "4.6.0.20260123-4",
+    "url": "https://pkg.devkitpro.org/packages/devkita64-newlib-4.6.0.20260123-4-any.pkg.tar.zst?x=1",
+    "sha256": "fc97ba1009a94b68f8714c3cc548ef697ca82687b72fe0c05a7ca3df81beb53e"
+  },
+  {
+    "name": "devkita64-rules",
+    "version": "1.1.1-1",
+    "url": "https://pkg.devkitpro.org/packages/devkita64-rules-1.1.1-1-any.pkg.tar.zst?x=1",
+    "sha256": "2649cf7827243447070073acc2aa2fee152a0592fc30e827ceed803c565a1ede"
+  },
+  {
+    "name": "dkp-cmake-common-utils",
+    "version": "1.5.3-1",
+    "url": "https://pkg.devkitpro.org/packages/dkp-cmake-common-utils-1.5.3-1-any.pkg.tar.zst?x=1",
+    "sha256": "9ddb64ff16962e6532d2a2bce1d7ae8eef4f6f5b859f145c2e58b87b7b164701"
+  },
+  {
+    "name": "dkp-toolchain-vars",
+    "version": "1.0.5-1",
+    "url": "https://pkg.devkitpro.org/packages/dkp-toolchain-vars-1.0.5-1-any.pkg.tar.zst?x=1",
+    "sha256": "e6e26af3147061090572b61c576114ee9a45d5ed8c77c7d93cc5f5559198c288"
+  },
+  {
+    "name": "general-tools",
+    "version": "1.4.4-1",
+    "url": "https://pkg.devkitpro.org/packages/windows/x86_64/general-tools-1.4.4-1-x86_64.pkg.tar.zst?x=1",
+    "sha256": "a0fcea1a26c4f472c2ac98c409847dbec9d8e86ed82cd8b02131454f63d239f1"
+  },
+  {
+    "name": "libnx",
+    "version": "4.12.0-1",
+    "url": "https://pkg.devkitpro.org/packages/libnx-4.12.0-1-any.pkg.tar.zst?x=1",
+    "sha256": "c6950bdf8e4b872ece492225368c03e633776329548a7494f91aa1e8f239cd8a"
+  },
+  {
+    "name": "switch-cmake",
+    "version": "1.5.2-1",
+    "url": "https://pkg.devkitpro.org/packages/switch-cmake-1.5.2-1-any.pkg.tar.zst?x=1",
+    "sha256": "7eee6a98312991faac73246f93d88740fb234d90ac5bd19ca969d6e227a59c8f"
+  },
+  {
+    "name": "switch-curl",
+    "version": "7.69.1-5",
+    "url": "https://pkg.devkitpro.org/packages/switch-curl-7.69.1-5-any.pkg.tar.zst?x=1",
+    "sha256": "062f683cc9925e6c27e38a9dc9c97fabe17a9eae6002c355000f5cff5886c81e"
+  },
+  {
+    "name": "switch-dav1d",
+    "version": "1.5.0-1",
+    "url": "https://pkg.devkitpro.org/packages/switch-dav1d-1.5.0-1-any.pkg.tar.zst?x=1",
+    "sha256": "612fa74cce39b1b7838d9d9b42bb4d1073fa8ccb6e4bbf092425190fa7826884"
+  },
+  {
+    "name": "switch-ffmpeg",
+    "version": "7.1-5",
+    "url": "https://pkg.devkitpro.org/packages/switch-ffmpeg-7.1-5-any.pkg.tar.zst?x=1",
+    "sha256": "22810bc38de15a1daed16496bfc6c9efcd2a1804f1409f43eaa2a7b4658a031c"
+  },
+  {
+    "name": "switch-freetype",
+    "version": "2.13.3-1",
+    "url": "https://pkg.devkitpro.org/packages/switch-freetype-2.13.3-1-any.pkg.tar.zst?x=1",
+    "sha256": "1271c1c81758a29f6c47ccb3c34769aa03737775fff05d7ae6f64f36d77fe004"
+  },
+  {
+    "name": "switch-harfbuzz",
+    "version": "10.0.1-1",
+    "url": "https://pkg.devkitpro.org/packages/switch-harfbuzz-10.0.1-1-any.pkg.tar.zst?x=1",
+    "sha256": "9d1ed03d580ed4cb3dd55365773d2e12bffefab9cff97a48ac9f5fd68051c14c"
+  },
+  {
+    "name": "switch-libass",
+    "version": "0.17.3-1",
+    "url": "https://pkg.devkitpro.org/packages/switch-libass-0.17.3-1-any.pkg.tar.zst?x=1",
+    "sha256": "c618ed7c9f0a88924cc7dc23baddcb227979689501754af520310dcf4b1f63e6"
+  },
+  {
+    "name": "switch-libpng",
+    "version": "1.6.48-1",
+    "url": "https://pkg.devkitpro.org/packages/switch-libpng-1.6.48-1-any.pkg.tar.zst?x=1",
+    "sha256": "99ea23b88c00dc678fff4290064916d5795db1f7445829420b689b29ac0078ff"
+  },
+  {
+    "name": "switch-mesa",
+    "version": "20.1.0-5",
+    "url": "https://pkg.devkitpro.org/packages/switch-mesa-20.1.0-5-any.pkg.tar.zst?x=1",
+    "sha256": "78328415d06bff75af07091243844ded5a63dc4d4520d2c708787b8d80ad386d"
+  },
+  {
+    "name": "switch-sdl2",
+    "version": "2.28.5-4",
+    "url": "https://pkg.devkitpro.org/packages/switch-sdl2-2.28.5-4-any.pkg.tar.zst?x=1",
+    "sha256": "395b2fe3cd7fed9d3edc443a35cd40d2b7e8dce8730a5acffc8fb9a85b52c031"
+  },
+  {
+    "name": "switch-sdl2_ttf",
+    "version": "2.22.0-2",
+    "url": "https://pkg.devkitpro.org/packages/switch-sdl2_ttf-2.22.0-2-any.pkg.tar.zst?x=1",
+    "sha256": "b9e7bcc874a2a004a1280a062f44dca039f3167cd88915faea8d04afc7a079ec"
+  },
+  {
+    "name": "switch-tools",
+    "version": "1.13.1-1",
+    "url": "https://pkg.devkitpro.org/packages/windows/x86_64/switch-tools-1.13.1-1-x86_64.pkg.tar.zst?x=1",
+    "sha256": "c9c5fc60e3dd2f82d7c6592611bd37cc610d150ef4fa75fe09ce329df998084d"
+  },
+  {
+    "name": "switch-zlib",
+    "version": "1.3.1-1",
+    "url": "https://pkg.devkitpro.org/packages/switch-zlib-1.3.1-1-any.pkg.tar.zst?x=1",
+    "sha256": "53cb5dc4006c96cd4195dabc15b46f07a63ad99c91939ce921db33556396442c"
+  }
+]
