@@ -40,10 +40,11 @@ Switch NRO
 
 - Windows 上以 devkitA64 r30 / GCC 16.1.0、libnx 4.12.0 完成交叉编译与 NRO 打包。
 - 本机协议测试通过：参考 Web 固定签名、连接 Protobuf、Socket.IO / ICE，以及 300 组随机 WebSocket 数据流。
-- 本机原生 WebRTC 回环通过：ICE、DTLS、SCTP 二进制键盘消息、SRTP H.264 RTP 重组。
+- 本机原生 WebRTC 回环通过：连续三轮初始化与清理，覆盖 ICE、DTLS、五个 SCTP 数据通道、二进制键盘消息、SRTP H.264 与 Opus RTP 重组。
 - 短信 API 参数、冷却时间、失败重试、前导零验证码和登录响应校验通过模拟请求测试；未发送真实短信。
 - 使用实际 qrcodegen 编码器与新版布局生成 477×477 像素的合成登录二维码，经图像解码恢复出完整原始 URL；手机实扫仍需真机复测。
 - Horizon 使用的 pthread 随机数分支通过 8 线程并发初始化、状态保留、线程隔离和退出清理测试。
+- Horizon 的 usrsctp 内部 C 类型与 libdatachannel 外部 C++ 类型均通过地址长度、地址族偏移与字段宽度的编译期断言；ARM64 实际初始化指令中的地址前缀为 `10 7b`（长度 16、地址族 123）。
 - 在 GNU 本机回环中将 `pthread_detach` 强制替换为返回 ENOSYS，先验证 `std::thread::detach` 确实抛错，再验证域名候选解析、ICE / DTLS / SCTP / SRTP 和清理全程不调用 detach。后台任务并发、嵌套、移动参数、异常保留及退出等待测试通过。
 - NRO0 与 ASET 资源段检查、ZIP CRC 和包内 NRO 一致性检查通过。
 - 已收到用户真机连接阶段崩溃报告并完成符号定位；修复后的正式房间互通、短信实收、NVDEC、实际音视频与键鼠表现仍需真机复测。
@@ -63,6 +64,16 @@ Switch NRO
 检查发布版二进制发现 `pthread_detach` 固定返回 88（ENOSYS），而上游在解析非数值 ICE 候选地址和清理 RTC 运行时时调用 `std::thread::detach`。分离失败后，仍可 join 的线程在析构时触发 terminate。v0.1.2 用保留共享 future 的异步任务替换这两处，确认最终 Switch ELF 不再含 `pthread_detach` / `std::thread::detach`。
 
 该兼容缺陷已通过禁用 detach 的本机回环覆盖；是否就是用户此次异常的直接触发点，仍需真机复测。终止处理器现在记录异常类型、数值错误码和代码偏移，再直接退出进程，避免 libc 的全局清理与仍在呈现画面的 UI 线程发生竞争。
+
+## v0.1.2 SCTP 堆越界定位
+
+用户报告的 Build ID `5449a2e3c1b942cde71efc81eb5317fd3633f6ea` 与保存的 v0.1.2 ELF 一致。`2168-0002` 的 PC `0x10b7858` 位于 `_malloc_r`；调用栈已通过 DTLS 握手，正在 `SctpTransport` 构造函数末尾插入实例。崩溃前刚调用了 `usrsctp_register_address`。
+
+Horizon 的 `sockaddr` 首两字节是长度和地址族；usrsctp 公共头按已知 BSD 系统宏选择这种布局，但没有识别 `__SWITCH__`，导致 `sockaddr_conn` 使用两个字节的地址族，并将 `HAVE_SCONN_LEN` 缓存为 false。内部却正确启用了 `HAVE_SA_LEN`。因此 `sctp_add_addr_to_vrf` 将 `AF_CONN=123` 读作 `sa_len`，把栈上的 123 字节复制进 32 字节的地址联合体，覆盖后续字段及堆元数据。该复制发生后，下一个 16 字节分配在 malloc 内崩溃。
+
+v0.1.3 将 Horizon 加入长度前缀分支，重新检测已缓存的 `have_sconn_len`，并将 `HAVE_SCONN_LEN` 同时传给 C 库和 C++ 适配层。两处都包含 `switch_compat/sctp_layout.h`，检查长度、地址族的偏移、字段宽度和目标容量。`python tests/switch_sctp_layout_test.py` 用实际 SDK 头文件分别交叉编译 C / C++，验证正确布局通过、旧布局被拒绝。旧版 `usrsctp_register_address` 的实际 ARM64 初始化值为 `0x007b`；新版该函数及 C++ `getSockAddrConn` 均为 `0x7b10`，小端字节序下即长度 16、地址族 123。
+
+本机回环使用宿主 socket 布局，不能覆盖 Horizon ABI；本次额外核对了目标编译和二进制指令。修复后的正式串流仍需真机复测，原始用户报告继续保留在仓库外。
 
 ## 参考
 

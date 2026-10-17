@@ -32,6 +32,19 @@ void init_random(void) {}
 void read_random(void *buf, size_t size) { randomGet(buf, size); }
 void finish_random(void) {}
 #elif defined(SCTP_USE_OPENSSL_RAND)''')
+# Horizon has BSD length-prefixed sockaddr, despite not defining a BSD OS macro.
+# Without this, AF_CONN (123) is read as sa_len and overflows sctp_ifa.address.
+replace(Path('deps/usrsctp/usrsctplib/usrsctp.h'),
+        'defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)',
+        'defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__) || defined(__SWITCH__)')
+replace(Path('deps/usrsctp/usrsctplib/user_socket.c'), '#include <sys/timeb.h>', '''#include <sys/timeb.h>
+#ifdef __SWITCH__
+#include "switch_compat/sctp_layout.h"
+#endif''')
+replace(Path('src/impl/sctptransport.cpp'), '#include <vector>', '''#include <vector>
+#ifdef __SWITCH__
+#include "switch_compat/sctp_layout.h"
+#endif''')
 replace(Path('src/impl/utils.cpp'), '#include <thread>', '#include <thread>\n#ifdef __SWITCH__\n#include <switch.h>\n#endif')
 replace(Path('src/impl/utils.cpp'), '\t// Seed with random device\n\ttry {', '\t// Seed with random device\n#ifdef __SWITCH__\n\tseed.resize(4); randomGet(seed.data(),seed.size()*sizeof(unsigned int));\n#else\n\ttry {')
 replace(Path('src/impl/utils.cpp'), '\t// Seed with high-resolution clock', '#endif\n\t// Seed with high-resolution clock')

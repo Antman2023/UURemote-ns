@@ -210,7 +210,7 @@ int main(int, char **) {
 #endif
             if (key.size() != 24)
                 throw std::runtime_error("Missing signing.key: run scripts/extract_key.py and rebuild");
-            uu::diagnostic("app-start-0.1.2");
+            uu::diagnostic("app-start-0.1.3");
             std::set_terminate(uu::terminateWithDiagnostics);
             std::string id = read(profile);
             if (id.size() != 36) {
