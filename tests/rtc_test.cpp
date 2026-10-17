@@ -147,6 +147,28 @@ int loopback() {
         audioReceiver->resetCallbacks();
         controller->close();
         host->close();
+        const auto closeDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        while (controller->state() != rtc::PeerConnection::State::Closed &&
+               std::chrono::steady_clock::now() < closeDeadline)
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        if (controller->state() != rtc::PeerConnection::State::Closed || !controller->remoteDescription())
+            result = 1;
+        // A closed peer retains SDP but releases ICE. Late signaling must neither
+        // call into that missing transport nor keep stale queued candidates.
+        earlyAnswerCandidates.emplace_back("candidate:late 1 UDP 2122260223 127.0.0.1 9 typ host", "0");
+        try {
+            for (const auto &signal : std::vector<uu::Json>{
+                     {{"type", "candidate"},
+                      {"candidate", "candidate:late 1 UDP 2122260223 127.0.0.1 9 typ host"}},
+                     {{"type", "answer"}, {"sdp", "late SDP must not be parsed"}}}) {
+                if (uu::applyRemoteSignal(*controller, signal, earlyAnswerCandidates) !=
+                        uu::RemoteSignal::Closed ||
+                    !earlyAnswerCandidates.empty())
+                    result = 1;
+            }
+        } catch (...) {
+            result = 1;
+        }
     }
     rtc::Cleanup().wait();
     uu::waitBackgroundTasks();

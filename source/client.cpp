@@ -480,7 +480,9 @@ void Client::handleSoac(const Json &packet) {
     else if (type == "offer" || type == "restart_ice")
         diagnostic("soac-offer-received");
     const auto result = applyRemoteSignal(*peer_, d, pendingCandidates_);
-    if (result == RemoteSignal::CandidateQueued)
+    if (result == RemoteSignal::Closed)
+        diagnostic("soac-after-transport-close");
+    else if (result == RemoteSignal::CandidateQueued)
         diagnostic("soac-candidate-queued");
     else if (result == RemoteSignal::CandidateApplied)
         diagnostic("soac-candidate-applied");

@@ -85,6 +85,14 @@ v0.1.3 将 Horizon 加入长度前缀分支，重新检测已缓存的 `have_sco
 
 真机排查时先确认 `app-start-0.1.4`，再看 `soac-offer-sent`、`soac-answer-received` 与 `soac-description-applied`；之后依次检查 ICE、DTLS、SCTP。ICE 状态值来自锁定版 libdatachannel：0 New、1 Checking、2 Connected、3 Completed、4 Failed、5 Disconnected、6 Closed。`rtc-dtls-connected` 表示完成 DTLS 握手，`rtc-sctp-connected` 表示数据通道传输已建立；缺少某个事件本身不能证明上一层失败，需结合状态、错误和超时判断。
 
+## v0.1.5 关闭后候选处理
+
+截图显示 `Got a remote candidate without ICE transport`。在锁定版 libdatachannel 中，`processRemoteCandidate` 只有在远端 SDP 存在而 ICE transport 指针为空时抛出该错误。`closeTransports` 先进入 Closed 状态，再清空传输指针，但保留 SDP；因此该消息可能来自最初失败后的迟到候选，不能直接当作失败起因。客户端先批量处理回调事件，再读信令；批量读取过程中发生关闭时，新候选可能早于下一轮状态事件处理而抛错。
+
+远端信令处理现在检查 Failed / Disconnected / Closed 及 ICE Closed，清空待用候选并返回关闭标记。处理期间若遇到 logic_error，仅在连接已关闭时忽略，活动连接的异常继续传播。原先排队的连接状态事件仍由客户端正常处理，不会因这个保护而自动重连或掩盖持续失败。
+
+本机回环在完成五通道音视频并关闭后，确认远端 SDP 仍存在，随后注入候选和无效的迟到 SDP，验证不再调用已关闭的传输或保留旧候选。用户随后复制的最新日志仍以 `app-start-0.1.3` 启动，说明尚未运行诊断版；v0.1.5 首页增加来自同一 CMake 版本定义的版本号，避免仅靠文件名判断更新是否生效。
+
 ## 参考
 
 - 参考项目 `UURemote-web` 中的 `server/uu-api.mjs`、`public/lib/streamer.js`、`public/lib/protocol.js`、`public/lib/protobuf.js`。

@@ -211,7 +211,7 @@ int main(int, char **) {
 #endif
             if (key.size() != 24)
                 throw std::runtime_error("Missing signing.key: run scripts/extract_key.py and rebuild");
-            uu::diagnostic("app-start-0.1.4");
+            uu::diagnostic("app-start-" UU_VERSION);
             std::set_terminate(uu::terminateWithDiagnostics);
             rtc::InitLogger(rtc::LogLevel::Info, [](rtc::LogLevel, const std::string &message) {
                 const auto event = uu::rtcLogEvent(message);
@@ -503,7 +503,7 @@ int main(int, char **) {
                         }
                     } else {
                         text(renderer, fonts.large, "UU远程", 62, 44);
-                        text(renderer, fonts.small, "NINTENDO SWITCH", 270, 69, accent);
+                        text(renderer, fonts.small, "NINTENDO SWITCH  v" UU_VERSION, 270, 69, accent);
                         text(renderer, fonts.small, state.authenticated ? state.nickname : "尚未登录", 930,
                              69, muted, 280);
                         rect(renderer, 62, 127, 1156, 1, {44, 56, 67, 255});
