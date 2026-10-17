@@ -53,6 +53,7 @@ class Client {
     int qrStatus_ = 1;
     SmsAuth sms_;
     void run();
+    void drainEvents();
     void handle(const Event &event);
     void packet(const WsMessage &message);
     void dispatch(const SioPacket &packet);

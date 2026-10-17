@@ -2,6 +2,7 @@
 #include "diagnostics.hpp"
 #include "rtc_diagnostics.hpp"
 #include "rtc_signaling.hpp"
+#include "signal_pump.hpp"
 #include <stdexcept>
 
 namespace uu {
@@ -37,35 +38,62 @@ void Client::command(const std::string &name, Json data) {
         cancel_ = true;
     post(name, std::move(data));
 }
+void Client::drainEvents() {
+    std::deque<Event> events;
+    {
+        std::lock_guard lock(inbox_->mutex);
+        events.swap(inbox_->events);
+    }
+    for (const auto &e : events) {
+        if (stop_)
+            break;
+        if (e.generation && e.generation != generation_)
+            continue;
+        handle(e);
+    }
+}
 void Client::run() {
     while (!stop_) {
         try {
-            std::deque<Event> events;
             {
                 std::unique_lock lock(inbox_->mutex);
                 if (inbox_->events.empty())
                     inbox_->cv.wait_for(lock, std::chrono::milliseconds(4));
-                events.swap(inbox_->events);
             }
-            for (const auto &e : events) {
-                if (stop_)
-                    break;
-                if (e.generation && e.generation != generation_)
-                    continue;
-                handle(e);
-            }
+            drainEvents();
             if (stop_)
                 break;
             if (socket_) {
-                WsMessage m;
-                int count = 0;
-                while (socket_->receive(m) && count++ < 64)
-                    packet(m);
-                if (nowMs() - lastPacket_ > heartbeatTimeout_)
+                pumpSignaling(
+                    [this](WsMessage &m) {
+                        const auto start = nowMs();
+                        const bool received = socket_->receive(m);
+                        const auto elapsed = nowMs() - start;
+                        if (elapsed >= 100)
+                            diagnostic(("signal-read-slow-ms-" + std::to_string(elapsed)).c_str());
+                        return received;
+                    },
+                    [this](const WsMessage &m) { packet(m); },
+                    [this] {
+                        if (stop_ || cancel_)
+                            return true;
+                        std::lock_guard lock(inbox_->mutex);
+                        return !inbox_->events.empty();
+                    },
+                    [] { return nowMs(); });
+                // Connected/failed callbacks may arrive while processing SDP/ICE.
+                // Apply them before the deadline, including callbacks queued at its boundary.
+                drainEvents();
+                if (socket_ && nowMs() - lastPacket_ > heartbeatTimeout_)
                     throw std::runtime_error("信令心跳超时");
             }
-            if (deadline_ && nowMs() > deadline_)
+            if (deadline_ && nowMs() > deadline_) {
+                if (peer_) {
+                    diagnostic(("timeout-peer-state-" + std::to_string(int(peer_->state()))).c_str());
+                    diagnostic(("timeout-ice-state-" + std::to_string(int(peer_->iceState()))).c_str());
+                }
                 throw std::runtime_error("连接超时，请检查电脑和网络后重试");
+            }
             if (!qr_.is_null() && nowMs() >= qrNext_)
                 pollQr();
         } catch (const std::exception &error) {

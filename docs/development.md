@@ -93,6 +93,16 @@ v0.1.3 将 Horizon 加入长度前缀分支，重新检测已缓存的 `have_sco
 
 本机回环在完成五通道音视频并关闭后，确认远端 SDP 仍存在，随后注入候选和无效的迟到 SDP，验证不再调用已关闭的传输或保留旧候选。用户随后复制的最新日志仍以 `app-start-0.1.3` 启动，说明尚未运行诊断版；v0.1.5 首页增加来自同一 CMake 版本定义的版本号，避免仅靠文件名判断更新是否生效。
 
+## v0.1.6 协商期间事件处理延迟
+
+v0.1.5 真机日志已记录 Offer 发出、Answer 收到并应用、远端候选持续应用，但从首次状态之后再无主线程记录的 RTC 状态，54 秒后进入连接超时；DTLS `-29312`（`MBEDTLS_ERR_SSL_CONN_EOF`）出现在 disconnect 之后，符合退出时停止接收队列的情况，不能单独据此判定 DTLS 原始失败。
+
+旧 `Client::run` 在同一循环里读取最多 64 条信令，甚至在检查条数上限前又调用一次 receive，之后先检查超时，到下一轮才处理回调。只要读取持续耗时，连接与收集状态等事件就会滞留。`pumpSignaling` 现在以 16 条 / 8 ms 为预算，并在出现待处理事件、取消或退出时让出；随后调用 `drainEvents`，再检查心跳与连接期限。慢速读取超过 100 ms 和超时时的实际状态只记录数值，不含协议内容。
+
+Switch 最终链接通过 `--wrap=sslConnectionRead` / `--wrap=sslConnectionWrite`，在数据读写时显式使用 `SslIoMode_NonBlocking`；握手本身、HTTPS 证书和主机名验证沿用现有实现。该适配使用公开 libnx API，避免依赖 curl 私有上下文布局。实际 SDK 的 libcurl 目标文件已经含有设置 I/O 模式的调用，不能把“库从未设置非阻塞”当成已确认原因；这里的包装是在数据入口保证 CONNECT_ONLY 所需的非阻塞契约。devkitPro 后端实现可参考[官方补丁](https://github.com/devkitPro/pacman-packages/blob/master/switch/curl/switch-curl.patch)，本地锁定 SDK 二进制也单独核对。
+
+测试覆盖持续来包、单次读取耗尽时间预算、取消时不再读取；TLS 模拟服务验证读写在非阻塞模式下执行，WouldBlock、部分读写和设置模式失败均完整保留。交叉编译使用真实 libnx 头；最终 ELF 的 libnx_recv / libnx_send 分别调用包装函数，包装函数调用真实 SSL 服务入口。真机是否能完成 DTLS / SCTP 仍需更新后验证。
+
 ## 参考
 
 - 参考项目 `UURemote-web` 中的 `server/uu-api.mjs`、`public/lib/streamer.js`、`public/lib/protocol.js`、`public/lib/protobuf.js`。
