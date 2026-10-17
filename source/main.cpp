@@ -2,6 +2,7 @@
 #include "client.hpp"
 #include "diagnostics.hpp"
 #include "qrcodegen.hpp"
+#include "rtc_diagnostics.hpp"
 #include <SDL_ttf.h>
 #include <cmath>
 #include <exception>
@@ -210,8 +211,13 @@ int main(int, char **) {
 #endif
             if (key.size() != 24)
                 throw std::runtime_error("Missing signing.key: run scripts/extract_key.py and rebuild");
-            uu::diagnostic("app-start-0.1.3");
+            uu::diagnostic("app-start-0.1.4");
             std::set_terminate(uu::terminateWithDiagnostics);
+            rtc::InitLogger(rtc::LogLevel::Info, [](rtc::LogLevel, const std::string &message) {
+                const auto event = uu::rtcLogEvent(message);
+                if (!event.empty())
+                    uu::diagnostic(event.c_str());
+            });
             std::string id = read(profile);
             if (id.size() != 36) {
                 id = uu::uuid();

@@ -35,6 +35,7 @@ class Client {
     std::unique_ptr<Api> api_;
     std::unique_ptr<SignalSocket> socket_;
     std::shared_ptr<rtc::PeerConnection> peer_;
+    rtc::PeerConnection::IceState iceState_ = rtc::PeerConnection::IceState::New;
     std::map<std::string, std::shared_ptr<rtc::DataChannel>> channels_;
     std::shared_ptr<rtc::Track> video_, audio_;
     Json remote_, ice_;
@@ -44,6 +45,7 @@ class Client {
     std::map<int, std::string> acks_;
     std::set<int> heldKeys_, heldButtons_;
     std::deque<Json> earlySoac_;
+    std::deque<rtc::Candidate> pendingCandidates_;
     SioPacket pending_;
     int remainingAttachments_ = 0;
     int64_t deadline_ = 0, lastPacket_ = 0, heartbeatTimeout_ = 45000, qrExpires_ = 0, qrNext_ = 0;

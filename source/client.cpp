@@ -1,5 +1,7 @@
 #include "client.hpp"
 #include "diagnostics.hpp"
+#include "rtc_diagnostics.hpp"
+#include "rtc_signaling.hpp"
 #include <stdexcept>
 
 namespace uu {
@@ -70,7 +72,10 @@ void Client::run() {
             if (stop_)
                 break;
             const auto failure = connectionFailure(snapshot().stage, error.what());
-            diagnostic("client-exception");
+            diagnosticException("client-exception", std::current_exception());
+            const auto reason = rtcLogEvent(error.what());
+            if (!reason.empty())
+                diagnostic(reason.c_str());
             disconnect();
             if (cancel_) {
                 cancel_ = false;
@@ -184,17 +189,36 @@ void Client::handle(const Event &event) {
     } else if (e == "local") {
         emit("soac",
              soac(remote_, data.at("type").get<std::string>(), {{"sdp", data.at("sdp")}}, ice_, control_));
+        diagnostic(data.value("type", "") == "answer" ? "soac-answer-sent" : "soac-offer-sent");
     } else if (e == "candidate") {
         emit("soac", soac(remote_, "candidate", data, ice_, control_));
+        diagnostic("soac-candidate-sent");
+    } else if (e == "ice-state" || e == "gathering-state" || e == "signaling-state") {
+        const auto label = "rtc-" + e + "-" + std::to_string(data.get<int>());
+        diagnostic(label.c_str());
+        if (e == "ice-state" && data != int(rtc::PeerConnection::IceState::Closed))
+            iceState_ = static_cast<rtc::PeerConnection::IceState>(data.get<int>());
+        if (e == "ice-state" &&
+            (data == int(rtc::PeerConnection::IceState::Connected) ||
+             data == int(rtc::PeerConnection::IceState::Completed)) &&
+            !snapshot().streaming)
+            setState("connecting", "网络通道已就绪，正在协商加密和数据通道…");
     } else if (e == "peer-state") {
         auto s = data.get<int>();
+        diagnostic(("rtc-peer-state-" + std::to_string(s)).c_str());
         if (s == int(rtc::PeerConnection::State::Connected)) {
             deadline_ = 0;
             setState("connected", "已连接 · 左摇杆移动鼠标 · ZR/ZL 点击 · − 断开");
         } else if (s == int(rtc::PeerConnection::State::Failed) ||
                    s == int(rtc::PeerConnection::State::Disconnected) ||
-                   s == int(rtc::PeerConnection::State::Closed))
-            throw std::runtime_error("音视频连接已中断，请重新连接");
+                   s == int(rtc::PeerConnection::State::Closed)) {
+            if (snapshot().streaming)
+                throw std::runtime_error("音视频连接已中断，请重新连接");
+            if (iceState_ == rtc::PeerConnection::IceState::Connected ||
+                iceState_ == rtc::PeerConnection::IceState::Completed)
+                throw std::runtime_error("加密或数据通道建立失败，详细阶段见 connection.log");
+            throw std::runtime_error("ICE 网络连接失败，详细阶段见 connection.log");
+        }
     } else if (e == "async-error")
         throw std::runtime_error(data.get<std::string>());
 }
@@ -400,6 +424,11 @@ void Client::beginPeer(const Json &result) {
         post("candidate", {{"candidate", std::string(c)}, {"sdpMid", c.mid()}, {"sdpMLineIndex", 0}});
     });
     peer_->onStateChange([post](rtc::PeerConnection::State s) { post("peer-state", int(s)); });
+    peer_->onIceStateChange([post](rtc::PeerConnection::IceState s) { post("ice-state", int(s)); });
+    peer_->onGatheringStateChange(
+        [post](rtc::PeerConnection::GatheringState s) { post("gathering-state", int(s)); });
+    peer_->onSignalingStateChange(
+        [post](rtc::PeerConnection::SignalingState s) { post("signaling-state", int(s)); });
     rtc::Description::Video v("0", rtc::Description::Direction::RecvOnly);
     diagnostic("rtc-video");
     v.addH264Codec(96, "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f");
@@ -445,18 +474,18 @@ void Client::handleSoac(const Json &packet) {
         if (idString(d["ice_id"]) != idString(ice_))
             return;
     }
-    auto type = d.value("type", std::string{});
-    if (type == "answer" || type == "offer" || type == "restart_ice") {
-        peer_->setRemoteDescription(
-            rtc::Description(d.at("sdp").get<std::string>(), type == "answer" ? "answer" : "offer"));
-        if (type != "answer")
-            peer_->setLocalDescription(rtc::Description::Type::Answer);
-    } else if (type == "candidate") {
-        auto c = d.contains("candidate") && d["candidate"].is_object() ? d["candidate"] : d;
-        peer_->addRemoteCandidate(rtc::Candidate(
-            c.at("candidate").get<std::string>(),
-            c.contains("sdpMid") && c["sdpMid"].is_string() ? c["sdpMid"].get<std::string>() : "0"));
-    }
+    const auto type = d.value("type", std::string{});
+    if (type == "answer")
+        diagnostic("soac-answer-received");
+    else if (type == "offer" || type == "restart_ice")
+        diagnostic("soac-offer-received");
+    const auto result = applyRemoteSignal(*peer_, d, pendingCandidates_);
+    if (result == RemoteSignal::CandidateQueued)
+        diagnostic("soac-candidate-queued");
+    else if (result == RemoteSignal::CandidateApplied)
+        diagnostic("soac-candidate-applied");
+    else if (result == RemoteSignal::Description)
+        diagnostic("soac-description-applied");
 }
 void Client::input(const Json &data) {
     auto it = channels_.find("CONTROL_DATA_CHANNEL");
@@ -494,9 +523,11 @@ void Client::disconnect() {
     diagnostic("disconnect");
     release();
     ++generation_;
+    iceState_ = rtc::PeerConnection::IceState::New;
     deadline_ = 0;
     qr_ = nullptr;
     earlySoac_.clear();
+    pendingCandidates_.clear();
     acks_.clear();
     remainingAttachments_ = 0;
     nextAck_ = 1;

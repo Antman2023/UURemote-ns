@@ -45,6 +45,24 @@ replace(Path('src/impl/sctptransport.cpp'), '#include <vector>', '''#include <ve
 #ifdef __SWITCH__
 #include "switch_compat/sctp_layout.h"
 #endif''')
+# Log only handshake chunk types, never raw SCTP packets or user messages.
+replace(Path('src/impl/sctptransport.cpp'), '#include "utils.hpp"', '''#include "utils.hpp"
+#ifdef __SWITCH__
+#include "rtc_diagnostics.hpp"
+#endif''')
+replace(Path('src/impl/sctptransport.cpp'),
+        '\tusrsctp_conninput(this, message->data(), message->size(), 0);', '''#ifdef __SWITCH__
+	uu::diagnosticSctpHandshake(false, reinterpret_cast<const uint8_t *>(message->data()), message->size());
+#endif
+	usrsctp_conninput(this, message->data(), message->size(), 0);''')
+replace(Path('src/impl/sctptransport.cpp'), '\t\tmWritten = true;', '''#ifdef __SWITCH__
+		uu::diagnosticSctpHandshake(true, reinterpret_cast<const uint8_t *>(data), len);
+#endif
+		mWritten = true;''')
+# Mbed TLS's strerror text lacks the numeric code needed for platform diagnosis.
+replace(Path('src/impl/tls.cpp'),
+        'throw std::runtime_error(message + ": " + std::string(buffer));',
+        'throw std::runtime_error(message + " [code=" + std::to_string(ret) + "]: " + std::string(buffer));')
 replace(Path('src/impl/utils.cpp'), '#include <thread>', '#include <thread>\n#ifdef __SWITCH__\n#include <switch.h>\n#endif')
 replace(Path('src/impl/utils.cpp'), '\t// Seed with random device\n\ttry {', '\t// Seed with random device\n#ifdef __SWITCH__\n\tseed.resize(4); randomGet(seed.data(),seed.size()*sizeof(unsigned int));\n#else\n\ttry {')
 replace(Path('src/impl/utils.cpp'), '\t// Seed with high-resolution clock', '#endif\n\t// Seed with high-resolution clock')

@@ -75,6 +75,16 @@ v0.1.3 将 Horizon 加入长度前缀分支，重新检测已缓存的 `have_sco
 
 本机回环使用宿主 socket 布局，不能覆盖 Horizon ABI；本次额外核对了目标编译和二进制指令。修复后的正式串流仍需真机复测，原始用户报告继续保留在仓库外。
 
+## v0.1.3 协商失败与 v0.1.4 诊断
+
+用户日志中，v0.1.3 在 `rtc-offer` 后约 41 秒记录 `client-exception`、`disconnect`、`error`，未出现 `runtime-terminate`。日志缺少远端描述、候选和各层状态，不能确认这是 ICE 失败、DTLS 失败、SCTP 超时还是其他异常。
+
+与参考 Web 实现对照后，补齐 `include/rtc_signaling.hpp` 中的候选暂存：远端 SDP 尚未设置时保留候选，设置描述并准备好本地回答后按顺序应用，最多 128 条；断开时清空。本机回环使用同一处理函数，故意在 Offer 和 Answer 前发送候选，覆盖扁平 / 嵌套格式以及完整音视频、五个数据通道与连续三轮清理。该顺序缺陷已修复，但旧日志不足以证明它触发了本次真机失败。
+
+`source/rtc_diagnostics.cpp` 将允许的库日志前缀映射成固定事件，只提取有限位数的数值错误码，其余文本全部丢弃。补丁仅检查 SCTP 包第一个 chunk 的类型，记录 INIT、INIT ACK、COOKIE ECHO、COOKIE ACK 和 ABORT 的收发方向，不保存包内容。Mbed TLS 异常增加数值错误码以便诊断；日志脱敏测试覆盖敏感尾部和未知消息被丢弃。
+
+真机排查时先确认 `app-start-0.1.4`，再看 `soac-offer-sent`、`soac-answer-received` 与 `soac-description-applied`；之后依次检查 ICE、DTLS、SCTP。ICE 状态值来自锁定版 libdatachannel：0 New、1 Checking、2 Connected、3 Completed、4 Failed、5 Disconnected、6 Closed。`rtc-dtls-connected` 表示完成 DTLS 握手，`rtc-sctp-connected` 表示数据通道传输已建立；缺少某个事件本身不能证明上一层失败，需结合状态、错误和超时判断。
+
 ## 参考
 
 - 参考项目 `UURemote-web` 中的 `server/uu-api.mjs`、`public/lib/streamer.js`、`public/lib/protocol.js`、`public/lib/protobuf.js`。

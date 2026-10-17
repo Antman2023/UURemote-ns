@@ -1,4 +1,5 @@
 #include "background.hpp"
+#include "rtc_signaling.hpp"
 #include <algorithm>
 #include <chrono>
 #include <condition_variable>
@@ -28,18 +29,40 @@ int loopback() {
         auto controller = std::make_shared<rtc::PeerConnection>(config);
         auto host = std::make_shared<rtc::PeerConnection>(config);
         std::weak_ptr<rtc::PeerConnection> weakController = controller, weakHost = host;
-        controller->onLocalDescription([weakHost](rtc::Description sdp) {
+        std::deque<rtc::Candidate> earlyCandidates, earlyAnswerCandidates;
+        controller->onLocalDescription([weakHost, &earlyCandidates](rtc::Description sdp) {
             if (auto pc = weakHost.lock()) {
-                pc->setRemoteDescription(sdp);
-                // Non-numeric host must take the resolver path that used detach on Horizon.
-                pc->addRemoteCandidate(
-                    rtc::Candidate("candidate:resolver-test 1 UDP 2122260223 localhost 9 typ host", "0"));
-                pc->setLocalDescription(rtc::Description::Type::Answer);
+                // Deliberately deliver ICE before SDP, as the real signaling service may do.
+                const auto queued = uu::applyRemoteSignal(
+                    *pc,
+                    {{"type", "candidate"},
+                     {"candidate", "candidate:resolver-test 1 UDP 2122260223 localhost 9 typ host"},
+                     {"sdpMid", "0"}},
+                    earlyCandidates);
+                if (queued != uu::RemoteSignal::CandidateQueued || pc->remoteDescription())
+                    throw std::runtime_error("Candidate must wait for remote SDP");
+                uu::applyRemoteSignal(*pc, {{"type", "offer"}, {"sdp", std::string(sdp)}}, earlyCandidates);
+                if (!earlyCandidates.empty())
+                    throw std::runtime_error("Candidates must drain after SDP");
             }
         });
-        host->onLocalDescription([weakController](rtc::Description sdp) {
-            if (auto pc = weakController.lock())
-                pc->setRemoteDescription(sdp);
+        host->onLocalDescription([weakController, &earlyAnswerCandidates](rtc::Description sdp) {
+            if (auto pc = weakController.lock()) {
+                // Exercise the Switch's answering path and nested candidate format too.
+                const auto queued = uu::applyRemoteSignal(
+                    *pc,
+                    {{"type", "candidate"},
+                     {"candidate",
+                      {{"candidate", "candidate:early-answer 1 UDP 2122260223 localhost 9 typ host"},
+                       {"sdpMid", "0"}}}},
+                    earlyAnswerCandidates);
+                if (queued != uu::RemoteSignal::CandidateQueued || pc->remoteDescription())
+                    throw std::runtime_error("Answer candidates must wait for remote SDP");
+                uu::applyRemoteSignal(*pc, {{"type", "answer"}, {"sdp", std::string(sdp)}},
+                                      earlyAnswerCandidates);
+                if (!earlyAnswerCandidates.empty())
+                    throw std::runtime_error("Answer candidates must drain after SDP");
+            }
         });
         controller->onLocalCandidate([weakHost](rtc::Candidate candidate) {
             if (auto pc = weakHost.lock())
