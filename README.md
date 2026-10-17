@@ -1,95 +1,165 @@
-# UU远程 Nintendo Switch 主控端
+# UU Remote NS
 
-参考 `UURemote-web` 的已验证协议实现的原生 Switch 自制程序。Switch **独立连接网易 UU 正式 API、信令服务器和原版电脑端**，无需 Node 服务、浏览器、网页网关或额外的电脑代理。
+**面向 Nintendo Switch 的原生 UU 远程主控端。**
 
-当前交付为 **0.1.0 实验版**：已生成真实 ARM64 NRO，协议回归和本机原生 WebRTC 回环测试通过；尚未在 Switch 真机上验证登录和原版电脑串流，不能视为已经完成兼容性验证。
+基于 C++17 / libnx 的非官方自制程序，独立连接网易 UU 正式服务与原版 UU远程电脑端，接收电脑画面和声音，并通过 Joy-Con 或触屏发送键鼠操作。运行时无需额外网关。
 
-## 安装与使用
+![Platform](https://img.shields.io/badge/platform-Nintendo%20Switch-428580)
+![Status](https://img.shields.io/badge/status-experimental-d99a36)
+[![License](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](LICENSE)
 
-1. 从 [GitHub Releases](https://github.com/Antman2023/UURemote-ns/releases) 下载 `UURemote-ns-0.1.0-switch.zip`，解压到 SD 卡根目录，得到 `sd:/switch/UURemote-ns/UURemote-ns.nro`。
-2. 在电脑上运行**原版 UU远程电脑端**并登录自己的账号。
-3. Switch 联网，按住 R 启动一个游戏进入完整内存模式的 hbmenu，再打开 UU Remote NS。相册小程序模式会显示提示并退出。
-4. 按 A 获取二维码，使用手机官方 UU远程 App 扫码并确认登录。
-5. 选择账号下的在线电脑，按 A 进入桌面。当前默认请求 H.264、1280×720、30 FPS。
+[**下载 v0.1.0 实验版**](https://github.com/Antman2023/UURemote-ns/releases/tag/v0.1.0) · [安装使用](#安装使用) · [按键操作](#按键操作) · [源码构建](#源码构建) · [开发记录](docs/development.md)
 
-账号令牌和扫码凭据只保存在内存，重启程序需重新登录。SD 卡只保存随机生成的主控 `client-id`。连接时不会强制抢占已有远控会话。
+> **当前为实验版，尚未完成 Switch 真机验证。**
+> 已通过 ARM64 NRO 交叉编译、协议回归和本机原生 WebRTC 回环测试；实际扫码登录、原版电脑连接、NVDEC、音视频与输入表现仍待真机联调。
 
-## 操作
+## 功能与验证状态
+
+当前源码已接入：
+
+- **账号与设备**：手机扫码登录，同步账号下的电脑，选择在线设备连接。
+- **画面与声音**：原生 WebRTC 接收 H.264 / Opus；视频优先尝试 NVDEC，无法使用时回退到软件解码。
+- **Joy-Con 与触屏**：摇杆鼠标、左右键、滚轮、常用按键和触屏拖动。
+- **会话管理**：取消连接、退出账号、连接异常提示，以及失焦或断开时尝试释放输入。
+
+| 验证项目 | 当前结果 |
+| --- | --- |
+| Switch ARM64 交叉编译、NRO 打包与资源段检查 | 通过 |
+| 与参考 Web 实现的签名 / Protobuf 对照、ACK / ICE 和 300 组 WebSocket 数据流测试 | 通过 |
+| 本机原生对端间的 ICE、DTLS、SCTP 二进制输入和 SRTP H.264 接收 | 通过 |
+| Switch 真机启动、正式账号登录和原版电脑互通 | 待验证 |
+| 真机 NVDEC、声音、输入语义、延迟及长时间稳定性 | 待验证 |
+
+默认请求 **1280 × 720 / 30 FPS / H.264**。Joy-Con 使用键鼠映射，尚未实现 UU 原生虚拟 Xbox 手柄协议。
+
+## 安装使用
+
+准备一台能够运行自制程序的 Nintendo Switch，以及已安装原版 UU远程的电脑和手机。Switch 需要联网；手机与电脑使用同一个 UU 账号。
+
+1. 下载 [SD 卡安装包](https://github.com/Antman2023/UURemote-ns/releases/download/v0.1.0/UURemote-ns-0.1.0-switch.zip)，解压到 SD 卡根目录。
+2. 在电脑上打开**原版 UU远程电脑端**，登录账号并保持在线。
+3. 在 Switch 上按住 **R** 启动一个游戏，进入完整内存模式的 hbmenu，再打开 **UU Remote NS**。不支持相册小程序模式。
+4. 按 **A** 获取二维码，使用手机官方 UU远程 App 扫码并确认。
+5. 选择列表中的在线电脑，按 **A** 连接；远程桌面中按 **−** 断开。
+
+安装后的文件位置：
+
+```text
+SD 卡根目录/
+└── switch/
+    └── UURemote-ns/
+        └── UURemote-ns.nro
+```
+
+也可下载 [单独的 NRO](https://github.com/Antman2023/UURemote-ns/releases/download/v0.1.0/UURemote-ns.nro)，手动放到上述目录。[SHA256SUMS](https://github.com/Antman2023/UURemote-ns/releases/download/v0.1.0/SHA256SUMS) 用于校验 NRO 和安装包。
+
+账号令牌与扫码凭据只保存在内存，重启程序后需要重新登录。SD 卡只保存随机生成的主控 `client-id`；连接时不会强制抢占已有远控会话。
+
+## 按键操作
 
 | 场景 | 按键 | 行为 |
 | --- | --- | --- |
-| 首页 | ↑ / ↓、A | 选择电脑、确认或扫码登录 |
-| 首页 | Y、X | 刷新设备、退出账号 |
+| 首页 | ↑ / ↓ · A | 选择电脑 · 确认或扫码登录 |
+| 首页 | Y · X · + | 刷新设备 · 退出账号 · 退出程序 |
 | 登录或连接中 | B / − | 取消 |
-| 首页 | + | 退出程序 |
 | 远程桌面 | 左摇杆 | 移动鼠标 |
 | 远程桌面 | ZR / ZL | 鼠标左键 / 右键 |
-| 远程桌面 | 触屏 | 绝对坐标移动、按住左键拖动；画面黑边不发送输入 |
-| 远程桌面 | 右摇杆上下 | 鼠标滚轮 |
+| 远程桌面 | 触屏 | 移动鼠标，按住拖动；画面黑边不发送输入 |
+| 远程桌面 | 右摇杆上下 | 滚轮 |
 | 远程桌面 | A / B / X / Y | Enter / Esc / Space / Tab |
-| 远程桌面 | 方向键、L / R | WASD、Ctrl / Shift |
-| 远程桌面 | + / − | 显示操作说明 / 断开连接 |
+| 远程桌面 | ↑ / ↓ / ← / → | W / S / A / D |
+| 远程桌面 | L / R | Ctrl / Shift |
+| 远程桌面 | + · − | 显示或隐藏操作说明 · 断开连接 |
 
-这是键鼠映射，未实现 UU 原生虚拟 Xbox 手柄协议。系统休眠、失焦或断开连接时会尝试释放已按下的键鼠输入。
+## 当前限制
 
-## 实现与限制
+- 仅提供扫码登录；未实现短信登录、应用列表与启动界面、剪贴板或文件传输。
+- 网络实现支持 IPv4 与 UDP TURN；不支持 TURN TCP / TLS，也没有自动重连。
+- 未实现 H.265、码率 / 分辨率设置和零拷贝显示；NVDEC 路径仍会将硬件帧传回 CPU，转换为 RGBA 后上传 SDL 纹理。
+- 音频尚未实现完整抖动缓冲和音画时钟同步，性能及稳定性需要真机测试。
 
-- C++17、devkitA64 / libnx；SDL2 显示和音频输出，系统共享字体显示中文。
-- libcurl 直接发起签名 HTTPS 请求，TLS 校验保持开启。Socket.IO / Engine.IO 4 通过 TLS WebSocket 直连，带原版 `X-NRD-AUTH` 头。
-- 保留 Web 版修正的 `04 || ConnectOptions` 二进制附件、嵌套 ICE 候选与五个原版数据通道。
-- libdatachannel / libjuice / Mbed TLS / usrsctp / SRTP 负责原生 WebRTC。支持 IPv4 直连与服务端提供的 UDP TURN；不支持 TURN TCP/TLS。
-- H.264 RTP 重组后交给 FFmpeg，优先尝试 NVTEGRA / NVDEC；不可用时使用软件解码。硬件帧先传到 CPU，再转换 RGBA 上传 SDL 纹理，尚未实现零拷贝显示。
-- Opus 解码到 48 kHz 双声道 PCM，限制音频积压；尚未实现完整的抖动缓冲和音画时钟同步。
-- 登录、设备列表、串流和键鼠输入均已接线；真实账号登录、NAT 穿透、NVDEC、性能和输入语义待真机联调。源码和构建成功不代表这些项目已实测通过。
-- 目前提供扫码登录；短信登录、应用列表/启动 UI、剪贴板、文件传输、H.265、码率/分辨率设置和自动重连尚未实现。
+真机联调可按[开发记录中的检查步骤](docs/development.md#真机检查步骤)进行。反馈问题请附上系统版本、启动模式、网络环境、具体操作和错误提示，避免提交账号令牌或扫码凭据。
 
-## 从源码构建
+## 源码构建
 
-依赖 CMake 3.21+、Ninja、Python 3.12+ 和 devkitPro Switch 工具链。标准 devkitPro 环境需安装 `switch-dev switch-sdl2 switch-sdl2_ttf switch-curl switch-ffmpeg switch-libopus`，其余 portlibs 由包依赖带入。
+### 获取源码
 
-Windows 可直接使用项目内的独立工具链；新机器需 Python 3.14+ 解压锁定的 `.tar.zst` 包，不修改系统目录：
+```sh
+git clone https://github.com/Antman2023/UURemote-ns.git
+cd UURemote-ns
+```
+
+需要 **CMake 3.21+、Ninja、Python 3.12+** 和 devkitPro Switch 工具链。构建时还需自行提供 **UU TV 3.5.0 APK**，用于提取该版本的请求签名材料；仓库不包含 APK 或签名常量。
+
+### Windows
+
+可用 Python **3.14+** 将锁定版本的工具链下载到项目内的 `.tools/`，无需安装到系统目录：
 
 ```powershell
 python scripts/bootstrap_sdk.py
 ./scripts/build.ps1 -Apk 'C:\path\to\UURemote-TV-3.5.0.apk'
 ```
 
-已有 devkitPro 时先设置 `$env:DEVKITPRO`。需要让 `cmake`、`ninja` 和 `python` 位于 PATH；项目存在 `.tools/ninja/ninja.exe` 时构建脚本优先使用它。输出为 `build-nx/UURemote-ns.nro` 与 `dist/` 安装包。
+已有 devkitPro 时，设置 `$env:DEVKITPRO` 后直接运行第二条命令即可，无需执行工具链下载脚本。`cmake`、`ninja` 和 `python` 需位于 PATH；构建脚本也会识别项目内已有的 `.tools/ninja/ninja.exe`。
 
-Linux / macOS：
+### Linux / macOS
+
+在已有 devkitPro 环境中安装 `switch-dev`、`switch-sdl2`、`switch-sdl2_ttf`、`switch-curl`、`switch-ffmpeg` 和 `switch-libopus`，其余 portlibs 由包依赖带入。然后执行：
 
 ```sh
 export DEVKITPRO=/opt/devkitpro
 python3 scripts/fetch_deps.py
 python3 scripts/patch_deps.py
-python3 scripts/extract_key.py /absolute/path/to/UU-TV-3.5.0.apk
+python3 scripts/extract_key.py /absolute/path/to/UURemote-TV-3.5.0.apk
 cmake -S . -B build-nx -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/switch.cmake -DCMAKE_BUILD_TYPE=Release
 cmake --build build-nx -j6
 python3 scripts/package.py
 ```
 
-第三方源码固定版本和 SHA256 见 `scripts/sources.lock.json`；Windows 工具链包固定 SHA256 见 `scripts/sdk-windows.lock.json`。依赖保存在被 Git 忽略的 `external/`，Switch 平台补丁由 `scripts/patch_deps.py` 幂等应用。
+已验证的交叉编译环境为 Windows、devkitA64 r30 / GCC 16.1.0、libnx 4.12.0；Linux / macOS 构建步骤尚未在本项目中实测。
 
-签名常量仅在本机构建时从用户提供的 TV 3.5.0 APK 提取，写入被 Git 忽略的 `romfs/signing.key` 并打包进 NRO；不打印、不写入源码。NRO 内嵌该材料，因此不应把它当作能够保密的客户端密钥。APK、UU 品牌与协议归原权利人所有；本项目为非官方客户端。
+构建输出：
 
-## 验证
+| 路径 | 内容 |
+| --- | --- |
+| `build-nx/UURemote-ns.nro` | Switch 可执行文件 |
+| `dist/UURemote-ns-0.1.0-switch.zip` | SD 卡安装包、说明和许可证 |
+| `dist/SHA256SUMS` | NRO 与安装包校验值 |
 
-协议测试可在普通 Windows / Linux / macOS 上运行，不需要 Switch：
+第三方源码版本与 SHA256 记录在 [sources.lock.json](scripts/sources.lock.json)，Windows 工具链包记录在 [sdk-windows.lock.json](scripts/sdk-windows.lock.json)。依赖下载到 `external/`，Horizon 平台补丁由 [patch_deps.py](scripts/patch_deps.py) 应用。
+
+### 本机测试
+
+以下测试使用**本机 C / C++ 编译器**，不需要 Switch、APK 或 UU 账号。首次运行前，先在仓库根目录执行 `python scripts/fetch_deps.py` 下载源码依赖。
 
 ```sh
+# 协议回归
 cmake -S . -B build-protocol -G Ninja -DUU_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Release
 cmake --build build-protocol
 ctest --test-dir build-protocol --output-on-failure
-```
 
-覆盖 Web 版固定签名与 Protobuf 字节对照、ACK、嵌套 ICE、信令主机限制，以及 300 组随机 WebSocket 长度与分片输入。
-
-原生 WebRTC 回环检查：
-
-```sh
+# 原生 WebRTC 回环
 cmake -S . -B build-rtc-test -G Ninja -DUU_RTC_TESTS=ON -DCMAKE_BUILD_TYPE=Release
 cmake --build build-rtc-test
 ctest --test-dir build-rtc-test --output-on-failure
 ```
 
-测试只使用本机两个原生对端，不连接真实 UU 账号，不构成原版电脑兼容性证明。详细实现位置与真机检查步骤见 [开发记录](docs/development.md)。
+回环测试仅使用本机两个原生对端，不连接正式 UU 房间，不能替代 Switch 与原版电脑端的兼容性验证。
+
+## 技术结构
+
+```mermaid
+flowchart LR
+    Switch[Switch 原生客户端] -->|登录、设备与信令| UU[网易 UU 正式服务]
+    Switch <-->|WebRTC 音视频与键鼠输入| PC[原版 UU远程电脑端]
+```
+
+客户端使用 libcurl 处理 HTTPS / TLS WebSocket，libdatachannel 及其依赖处理 WebRTC，FFmpeg / Opus 负责解码，SDL2 负责显示与音频输出。中文使用系统共享字体。协议移植参考 `UURemote-web`，保留其已验证的请求签名、连接参数及信令封装。
+
+实现细节、源码位置与真机检查步骤见 [开发记录](docs/development.md)。
+
+## 许可证与声明
+
+项目代码采用 [GPL-3.0-or-later](LICENSE)，依赖的授权信息见 [THIRD_PARTY.md](THIRD_PARTY.md)。
+
+签名材料在本机构建时从用户提供的 APK 提取，写入被 Git 忽略的 `romfs/signing.key`，并嵌入生成的 NRO；它不是能够在客户端保密的密钥。APK、UU 品牌和协议归原权利人所有。本项目非网易官方客户端，与网易无隶属或背书关系。
