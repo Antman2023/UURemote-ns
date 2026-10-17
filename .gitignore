@@ -9,3 +9,4 @@ romfs/signing.key
 *.map
 __pycache__/
 client-id
+connection.log

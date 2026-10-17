@@ -35,6 +35,37 @@ void finish_random(void) {}
 replace(Path('src/impl/utils.cpp'), '#include <thread>', '#include <thread>\n#ifdef __SWITCH__\n#include <switch.h>\n#endif')
 replace(Path('src/impl/utils.cpp'), '\t// Seed with random device\n\ttry {', '\t// Seed with random device\n#ifdef __SWITCH__\n\tseed.resize(4); randomGet(seed.data(),seed.size()*sizeof(unsigned int));\n#else\n\ttry {')
 replace(Path('src/impl/utils.cpp'), '\t// Seed with high-resolution clock', '#endif\n\t// Seed with high-resolution clock')
+# devkitA64 r30 -mtp=soft miscompiles this template's native TLS access as
+# [thread_pointer + thread_pointer]. Use libnx pthread keys on Horizon instead.
+# The test macro exercises precisely this branch with native pthreads.
+replace(Path('src/impl/utils.hpp'), '#include <vector>', '''#include <vector>
+#if defined(__SWITCH__) || defined(UU_PTHREAD_RANDOM_TEST)
+#include <memory>
+#include <pthread.h>
+#endif''')
+replace(Path('src/impl/utils.hpp'), '''	static thread_local std::seed_seq seed = random_seed();
+	static thread_local Generator engine{seed};
+	return random_engine_wrapper<Generator, Result>{engine};''', '''#if defined(__SWITCH__) || defined(UU_PTHREAD_RANDOM_TEST)
+	static const pthread_key_t key = [] {
+		pthread_key_t result;
+		if (pthread_key_create(&result, [](void *value) { delete static_cast<Generator *>(value); }))
+			throw std::runtime_error("Failed to allocate random engine thread key");
+		return result;
+	}();
+	auto *engine = static_cast<Generator *>(pthread_getspecific(key));
+	if (!engine) {
+		auto seed = random_seed();
+		auto instance = std::make_unique<Generator>(seed);
+		if (pthread_setspecific(key, instance.get()))
+			throw std::runtime_error("Failed to initialize random engine thread state");
+		engine = instance.release();
+	}
+	return random_engine_wrapper<Generator, Result>{*engine};
+#else
+	static thread_local std::seed_seq seed = random_seed();
+	static thread_local Generator engine{seed};
+	return random_engine_wrapper<Generator, Result>{engine};
+#endif''')
 replace(Path('src/impl/socket.hpp'), '#include <ifaddrs.h>', '#ifndef __SWITCH__\n#include <ifaddrs.h>\n#endif')
 # Use the socket-based wakeup path on Horizon; it has no POSIX pipe device.
 replace(Path('deps/libjuice/src/conn_poll.c'), '#ifdef _WIN32', '#if defined(_WIN32) || defined(__SWITCH__)')

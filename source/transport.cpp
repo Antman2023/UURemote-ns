@@ -1,4 +1,5 @@
 #include "transport.hpp"
+#include "auth.hpp"
 #include <chrono>
 #include <mbedtls/sha1.h>
 #include <stdexcept>
@@ -70,7 +71,9 @@ Json Api::request(const std::string &method, const std::string &path, const Json
     curl_easy_setopt(c.handle, CURLOPT_ERRORBUFFER, error);
     auto code = curl_easy_perform(c.handle);
     if (code != CURLE_OK)
-        throw std::runtime_error(cancel_ ? "Canceled" : std::string("HTTPS: ") + curl_easy_strerror(code));
+        throw std::runtime_error(cancel_ ? "Canceled"
+                                         : std::string("HTTPS: ") + curl_easy_strerror(code) + " (" +
+                                               std::to_string(code) + ")");
     long status = 0;
     curl_easy_getinfo(c.handle, CURLINFO_RESPONSE_CODE, &status);
     if (status == 204 || status == 205)
@@ -80,7 +83,7 @@ Json Api::request(const std::string &method, const std::string &path, const Json
         throw std::runtime_error("UU returned an invalid response (HTTP " + std::to_string(status) + ")");
     if (status == 401) {
         logout();
-        throw std::runtime_error("登录已失效，请重新扫码");
+        throw std::runtime_error("登录已失效，请重新登录");
     }
     if (status < 200 || status >= 300 || json.value("code", -1) != 0)
         throw std::runtime_error(json.value("msg", std::string("UU request failed")));
@@ -113,12 +116,11 @@ void Api::initialize() {
         throw std::runtime_error("设备初始化未返回 ID");
 }
 void Api::login(const Json &result) {
-    auto token = result.value("token", std::string{});
-    if (token.empty())
-        throw std::runtime_error("登录响应未返回令牌");
-    token_ = std::move(token);
-    const auto &u = result.at("user_id");
-    user_ = u.is_string() ? u.get<std::string>() : u.dump();
+    if (cancel_)
+        throw std::runtime_error("Canceled");
+    auto account = loginAccount(result);
+    token_ = std::move(account.token);
+    user_ = std::move(account.userId);
 }
 SignalSocket::~SignalSocket() {
     close();
@@ -161,7 +163,8 @@ void SignalSocket::open(const std::string &url, const std::string &token) {
     curl_easy_setopt(curl_, CURLOPT_CONNECT_ONLY, 1L);
     auto code = curl_easy_perform(curl_);
     if (code != CURLE_OK)
-        throw std::runtime_error("无法连接 UU 信令服务器");
+        throw std::runtime_error(std::string("TLS 连接失败：") + curl_easy_strerror(code) + " (" +
+                                 std::to_string(code) + ")");
     auto slash = https.find('/', 8);
     auto host = https.substr(8, slash - 8), path = https.substr(slash);
     const auto random = randomBytes(16);

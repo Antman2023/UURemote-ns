@@ -1,10 +1,13 @@
 #include "client.hpp"
+#include "diagnostics.hpp"
 #include "qrcodegen.hpp"
 #include <SDL_ttf.h>
 #include <cmath>
+#include <exception>
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <sys/stat.h>
 #ifdef __SWITCH__
 #include <switch.h>
@@ -41,6 +44,51 @@ void text(SDL_Renderer *r, TTF_Font *f, const std::string &s, int x, int y, SDL_
     SDL_DestroyTexture(t);
     SDL_FreeSurface(surface);
 }
+void statusText(SDL_Renderer *renderer, TTF_Font *font, const std::string &message, SDL_Color tint) {
+    auto *surface = TTF_RenderUTF8_Blended_Wrapped(font, message.substr(0, 512).c_str(), tint, 1110);
+    if (!surface)
+        return;
+    auto *texture = SDL_CreateTextureFromSurface(renderer, surface);
+    SDL_Rect source{0, 0, surface->w, std::min(surface->h, 64)}, destination{82, 580, source.w, source.h};
+    if (texture)
+        SDL_RenderCopy(renderer, texture, &source, &destination);
+    SDL_DestroyTexture(texture);
+    SDL_FreeSurface(surface);
+}
+std::optional<std::string> numericInput(const char *title, const std::string &value, int minimum,
+                                        int maximum) {
+#ifdef __SWITCH__
+    SwkbdConfig keyboard{};
+    if (R_FAILED(swkbdCreate(&keyboard, 0)))
+        return std::nullopt;
+    swkbdConfigMakePresetDefault(&keyboard);
+    swkbdConfigSetType(&keyboard, SwkbdType_NumPad);
+    swkbdConfigSetHeaderText(&keyboard, title);
+    swkbdConfigSetInitialText(&keyboard, value.c_str());
+    swkbdConfigSetStringLenMin(&keyboard, minimum);
+    swkbdConfigSetStringLenMax(&keyboard, maximum);
+    swkbdConfigSetOkButtonText(&keyboard, "确定");
+    std::array<char, 64> buffer{};
+    auto result = swkbdShow(&keyboard, buffer.data(), buffer.size());
+    swkbdClose(&keyboard);
+    if (R_FAILED(result))
+        return std::nullopt;
+    return std::string(buffer.data());
+#else
+    (void)title;
+    (void)value;
+    (void)minimum;
+    (void)maximum;
+    return std::nullopt;
+#endif
+}
+struct SmsForm {
+    std::string country = "86", mobile, code;
+    int selected = 1;
+    uu::Json credentials() const {
+        return {{"countryCode", country}, {"mobile", mobile}, {"code", code}};
+    }
+};
 struct Fonts {
     TTF_Font *normal = nullptr, *small = nullptr, *large = nullptr;
     Fonts() {
@@ -161,6 +209,11 @@ int main(int, char **) {
 #endif
             if (key.size() != 24)
                 throw std::runtime_error("Missing signing.key: run scripts/extract_key.py and rebuild");
+            uu::diagnostic("app-start-0.1.1");
+            std::set_terminate([] {
+                uu::diagnostic("runtime-terminate");
+                std::abort();
+            });
             std::string id = read(profile);
             if (id.size() != 36) {
                 id = uu::uuid();
@@ -180,6 +233,7 @@ int main(int, char **) {
                 SDL_Texture *video = nullptr;
                 std::string qrUrl;
                 std::unique_ptr<qrcodegen::QrCode> qr;
+                SmsForm sms;
                 SDL_Rect viewport{0, 0, 1280, 720};
                 auto send = [&](const uu::Json &data) { client.command("input", data); };
                 while (running) {
@@ -255,7 +309,8 @@ int main(int, char **) {
                     c.my = -axis(stick.y);
                     c.scroll = axis(right.y);
 #endif
-                    bool busy = state.stage != "idle" && state.stage != "error" && state.stage != "login";
+                    bool busy = state.stage != "idle" && state.stage != "error" && state.stage != "login" &&
+                                state.stage != "sms";
                     if (c.exit)
                         running = false;
                     if (state.streaming) {
@@ -338,13 +393,53 @@ int main(int, char **) {
                             overlay = true;
                             touchHeld = false;
                         }
-                        if (c.back || c.disconnect) {
+                        if (!state.authenticated && c.logout && (!busy || state.stage == "login")) {
+                            sms = SmsForm{};
+                            client.command(state.loginMode == "sms" ? "login" : "sms-open");
+                        } else if (c.back || c.disconnect) {
+                            sms = SmsForm{};
                             client.command("cancel");
                         } else if (c.logout && state.authenticated)
                             client.command("logout");
                         else if (c.refresh && state.authenticated && !busy)
                             client.command("refresh");
-                        else if (!busy && state.stage != "login") {
+                        else if (!state.authenticated && state.loginMode == "sms") {
+                            if (!busy) {
+                                if (c.up)
+                                    sms.selected = std::max(0, sms.selected - 1);
+                                if (c.down)
+                                    sms.selected = std::min(4, sms.selected + 1);
+                                if (c.confirm) {
+                                    if (sms.selected < 3) {
+                                        auto *value = sms.selected == 0   ? &sms.country
+                                                      : sms.selected == 1 ? &sms.mobile
+                                                                          : &sms.code;
+                                        const char *title = sms.selected == 0   ? "国家或地区区号"
+                                                            : sms.selected == 1 ? "手机号码"
+                                                                                : "6 位短信验证码";
+                                        auto input = numericInput(title, *value,
+                                                                  sms.selected == 0   ? 1
+                                                                  : sms.selected == 1 ? 4
+                                                                                      : 6,
+                                                                  sms.selected == 0   ? 4
+                                                                  : sms.selected == 1 ? 15
+                                                                                      : 6);
+                                        if (input) {
+                                            *value = *input;
+                                            sms.selected = sms.selected == 1 ? 3 : sms.selected == 2 ? 4 : 1;
+                                        }
+#ifdef __SWITCH__
+                                        padUpdate(&pad);
+                                        lastHeld = padGetButtons(&pad);
+#endif
+                                    } else if (sms.selected == 3 && uu::nowMs() >= state.smsRetryAt) {
+                                        client.command("sms-code", sms.credentials());
+                                        sms.selected = 2;
+                                    } else if (sms.selected == 4)
+                                        client.command("sms-login", sms.credentials());
+                                }
+                            }
+                        } else if (!busy && state.stage != "login") {
                             if (c.up)
                                 selected = std::max(0, selected - 1);
                             if (c.down)
@@ -408,34 +503,6 @@ int main(int, char **) {
                         text(renderer, fonts.small, state.authenticated ? state.nickname : "尚未登录", 930,
                              69, muted, 280);
                         rect(renderer, 62, 127, 1156, 1, {44, 56, 67, 255});
-                        text(renderer, fonts.small, "我的电脑", 62, 167, muted);
-                        if (!state.devices.empty()) {
-                            selected = std::clamp(selected, 0, int(state.devices.size()) - 1);
-                            int first = std::max(0, selected - 3);
-                            float target = 223.f + (selected - first) * 88;
-                            focusY += (target - focusY) * std::min(1.f, dt * 18);
-                            rect(renderer, 62, int(focusY), 535, 78, {32, 50, 53, 255});
-                            rect(renderer, 62, int(focusY), 4, 78, accent);
-                            for (int i = first; i < std::min(first + 4, int(state.devices.size())); ++i) {
-                                auto &d = state.devices[i];
-                                int y = 232 + (i - first) * 88;
-                                bool online = d.value("status", std::string{}) != "offline";
-                                text(renderer, fonts.normal, d.value("alias", std::string("电脑")), 84, y,
-                                     white, 470);
-                                text(renderer, fonts.small, online ? "在线" : "离线", 84, y + 35,
-                                     online ? accent : muted);
-                            }
-                        } else {
-                            text(renderer, fonts.normal,
-                                 state.authenticated ? "暂未发现电脑" : "登录你的 UU 账号", 62, 237);
-                            text(renderer, fonts.small,
-                                 state.authenticated ? "请在电脑上登录同一账号"
-                                                     : "手机扫码，即可同步远程电脑",
-                                 62, 287, muted);
-                            rect(renderer, 62, 350, 330, 64, accent);
-                            text(renderer, fonts.normal, state.authenticated ? "Y  刷新设备" : "A  扫码登录",
-                                 88, 367, {13, 19, 25, 255});
-                        }
                         if (state.qrUrl != qrUrl) {
                             qrUrl = state.qrUrl;
                             qr.reset();
@@ -443,18 +510,86 @@ int main(int, char **) {
                                 qr = std::make_unique<qrcodegen::QrCode>(qrcodegen::QrCode::encodeText(
                                     qrUrl.c_str(), qrcodegen::QrCode::Ecc::MEDIUM));
                         }
-                        if (qr) {
-                            int scale = std::max(1, 280 / (qr->getSize() + 8)),
-                                size = (qr->getSize() + 8) * scale;
-                            int x = 893 - size / 2, y = 220;
-                            rect(renderer, x, y, size, size, {255, 255, 255, 255});
-                            for (int j = 0; j < qr->getSize(); ++j)
-                                for (int i = 0; i < qr->getSize(); ++i)
-                                    if (qr->getModule(i, j))
-                                        rect(renderer, x + (i + 4) * scale, y + (j + 4) * scale, scale, scale,
-                                             {0, 0, 0, 255});
-                            text(renderer, fonts.small, "使用手机 UU远程 App 扫码", 730, 535, muted);
+                        if (!state.authenticated && state.loginMode == "sms") {
+                            text(renderer, fonts.large, "短信验证码登录", 62, 162);
+                            text(renderer, fonts.small, "使用与电脑端相同的手机号", 62, 220, muted);
+                            int xs[] = {80, 310, 840}, widths[] = {190, 490, 340};
+                            const char *labels[] = {"国家 / 地区", "手机号码", "短信验证码"};
+                            std::string values[] = {
+                                "+" + sms.country, sms.mobile.empty() ? "输入手机号码" : sms.mobile,
+                                sms.code.empty() ? "输入 6 位验证码" : std::string(sms.code.size(), '*')};
+                            for (int field = 0; field < 3; ++field) {
+                                text(renderer, fonts.small, labels[field], xs[field], 278, muted);
+                                rect(renderer, xs[field], 316, widths[field], 64,
+                                     sms.selected == field ? SDL_Color{32, 60, 57, 255}
+                                                           : SDL_Color{28, 40, 49, 255});
+                                if (sms.selected == field)
+                                    rect(renderer, xs[field], 316, 4, 64, accent);
+                                text(renderer, fonts.normal, values[field], xs[field] + 18, 334, white,
+                                     widths[field] - 30);
+                            }
+                            int remaining =
+                                int(std::max<int64_t>(0, (state.smsRetryAt - uu::nowMs() + 999) / 1000));
+                            rect(renderer, 80, 424, 500, 68,
+                                 sms.selected == 3 ? accent : SDL_Color{28, 40, 49, 255});
+                            rect(renderer, 660, 424, 520, 68,
+                                 sms.selected == 4 ? accent : SDL_Color{28, 40, 49, 255});
+                            text(renderer, fonts.normal,
+                                 remaining ? std::to_string(remaining) + " 秒后重发" : "发送验证码", 104, 444,
+                                 sms.selected == 3 ? SDL_Color{13, 19, 25, 255} : white);
+                            text(renderer, fonts.normal, "登录", 686, 444,
+                                 sms.selected == 4 ? SDL_Color{13, 19, 25, 255} : white);
+                            text(renderer, fonts.small, "↑ ↓ 选择项目   A 输入或确认   X 切换扫码登录", 80,
+                                 514, muted);
+                        } else if (state.stage == "login") {
+                            text(renderer, fonts.large, "扫码登录", 62, 208);
+                            text(renderer, fonts.normal, "使用手机 UU远程 App", 62, 294, white, 550);
+                            text(renderer, fonts.normal, "扫描右侧二维码并确认", 62, 336, white, 550);
+                            text(renderer, fonts.small, "X  短信验证码登录", 62, 432, accent);
+                            text(renderer, fonts.small, "B  取消 / 返回", 62, 476, muted);
+                            if (qr) {
+                                auto layout = uu::qrGeometry(qr->getSize());
+                                rect(renderer, layout.x, layout.y, layout.size, layout.size,
+                                     {255, 255, 255, 255});
+                                for (int y = 0; y < qr->getSize(); ++y)
+                                    for (int x = 0; x < qr->getSize(); ++x)
+                                        if (qr->getModule(x, y))
+                                            rect(renderer, layout.x + (x + layout.border) * layout.scale,
+                                                 layout.y + (y + layout.border) * layout.scale, layout.scale,
+                                                 layout.scale, {0, 0, 0, 255});
+                            } else
+                                text(renderer, fonts.normal, "正在获取二维码…", 760, 360, muted);
                         } else {
+                            text(renderer, fonts.small, "我的电脑", 62, 167, muted);
+                            if (!state.devices.empty()) {
+                                int first = std::max(0, selected - 3);
+                                float target = 223.f + (selected - first) * 88;
+                                focusY += (target - focusY) * std::min(1.f, dt * 18);
+                                rect(renderer, 62, int(focusY), 535, 78, {32, 50, 53, 255});
+                                rect(renderer, 62, int(focusY), 4, 78, accent);
+                                for (int i = first; i < std::min(first + 4, int(state.devices.size())); ++i) {
+                                    auto &device = state.devices[i];
+                                    int y = 232 + (i - first) * 88;
+                                    bool online = device.value("status", std::string{}) != "offline";
+                                    text(renderer, fonts.normal, device.value("alias", std::string("电脑")),
+                                         84, y, white, 470);
+                                    text(renderer, fonts.small, online ? "在线" : "离线", 84, y + 35,
+                                         online ? accent : muted);
+                                }
+                            } else {
+                                text(renderer, fonts.normal,
+                                     state.authenticated ? "暂未发现电脑" : "登录你的 UU 账号", 62, 237);
+                                text(renderer, fonts.small,
+                                     state.authenticated ? "请在电脑上登录同一账号"
+                                                         : "扫码或短信登录，同步远程电脑",
+                                     62, 287, muted);
+                                rect(renderer, 62, 350, 440, 64, accent);
+                                text(renderer, fonts.normal,
+                                     state.authenticated ? "Y  刷新设备" : "A  扫码登录", 88, 367,
+                                     {13, 19, 25, 255});
+                                if (!state.authenticated)
+                                    text(renderer, fonts.normal, "X  短信验证码登录", 62, 450, accent);
+                            }
                             rect(renderer, 718, 237, 356, 214, {28, 40, 49, 255});
                             rect(renderer, 729, 248, 334, 192, {17, 25, 33, 255});
                             rect(renderer, 886, 451, 20, 45, {44, 56, 67, 255});
@@ -466,11 +601,16 @@ int main(int, char **) {
                             rect(renderer, 62, 591, 6, 26,
                                  {accent.r, accent.g, accent.b, uint8_t(100 + pulse * 155)});
                         }
-                        text(renderer, fonts.small, state.detail, 82, 594,
-                             state.stage == "error" ? SDL_Color{255, 157, 141, 255} : muted, 1110);
+                        if (state.stage == "login")
+                            text(renderer, fonts.small, state.detail, 82, 548, muted, 550);
+                        else
+                            statusText(renderer, fonts.small, state.detail,
+                                       state.stage == "error" ? SDL_Color{255, 157, 141, 255} : muted);
                         rect(renderer, 62, 653, 1156, 1, {44, 56, 67, 255});
-                        text(renderer, fonts.small, "A 确认    B 返回    Y 刷新    X 退出账号", 62, 675,
-                             muted);
+                        text(renderer, fonts.small,
+                             state.authenticated ? "A 确认    B 返回    Y 刷新    X 退出账号"
+                                                 : "A 确认    B 返回    X 切换登录方式",
+                             62, 675, muted);
                         text(renderer, fonts.small, "+ 退出", 1120, 675, muted);
                     }
                     SDL_RenderPresent(renderer);

@@ -1,4 +1,5 @@
 #include "client.hpp"
+#include "diagnostics.hpp"
 #include <stdexcept>
 
 namespace uu {
@@ -17,6 +18,7 @@ Snapshot Client::snapshot() {
     return state_;
 }
 void Client::setState(const std::string &stage, const std::string &detail) {
+    diagnostic(stage.c_str());
     std::lock_guard lock(stateMutex_);
     state_.stage = stage;
     state_.detail = detail;
@@ -29,7 +31,7 @@ void Client::post(std::string type, Json data, uint64_t generation) {
     inbox_->cv.notify_one();
 }
 void Client::command(const std::string &name, Json data) {
-    if (name == "disconnect" || name == "logout" || name == "cancel")
+    if (name == "disconnect" || name == "logout" || name == "cancel" || name == "sms-open" || name == "login")
         cancel_ = true;
     post(name, std::move(data));
 }
@@ -67,12 +69,19 @@ void Client::run() {
         } catch (const std::exception &error) {
             if (stop_)
                 break;
+            const auto failure = connectionFailure(snapshot().stage, error.what());
+            diagnostic("client-exception");
             disconnect();
             if (cancel_) {
                 cancel_ = false;
                 setState("idle", "已取消");
             } else
-                setState("error", error.what());
+                setState("error", failure);
+        } catch (...) {
+            diagnostic("client-unknown-exception");
+            disconnect();
+            cancel_ = false;
+            setState("error", "发生异常，连接阶段已写入 connection.log");
         }
     }
     cancel_ = false;
@@ -84,6 +93,10 @@ void Client::handle(const Event &event) {
     if (e == "login") {
         disconnect();
         cancel_ = false;
+        {
+            std::lock_guard lock(stateMutex_);
+            state_.loginMode = "qr";
+        }
         setState("login", "正在生成登录二维码…");
         api_->initialize();
         qr_ = api_->request("POST", "/api/v1/qrcode/gen/login");
@@ -97,9 +110,39 @@ void Client::handle(const Event &event) {
             state_.qrUrl = qr_["qrcode_jump_url"].get<std::string>();
         }
         setState("login", "请使用手机 UU远程 App 扫码并确认");
+    } else if (e == "sms-open") {
+        disconnect();
+        cancel_ = false;
+        {
+            std::lock_guard lock(stateMutex_);
+            state_.loginMode = "sms";
+        }
+        setState("sms", "输入手机号并发送验证码");
+    } else if (e == "sms-code" || e == "sms-login") {
+        cancel_ = false;
+        auto request = [this](const std::string &path, const Json &body) {
+            api_->initialize();
+            return api_->request("POST", path, body);
+        };
+        if (e == "sms-code") {
+            setState("sms-sending", "正在发送短信验证码…");
+            sms_.sendCode(request, data, nowMs());
+            {
+                std::lock_guard lock(stateMutex_);
+                state_.smsRetryAt = sms_.retryAt();
+            }
+            setState("sms", "验证码已发送，输入 6 位验证码后登录");
+        } else {
+            setState("sms-verifying", "正在验证短信验证码…");
+            completeLogin(sms_.login(request, data));
+        }
     } else if (e == "cancel" || e == "disconnect") {
         disconnect();
         cancel_ = false;
+        {
+            std::lock_guard lock(stateMutex_);
+            state_.loginMode = "qr";
+        }
         setState("idle", "已断开，按 Y 刷新设备或按 A 登录");
     } else if (e == "logout") {
         disconnect();
@@ -125,10 +168,10 @@ void Client::handle(const Event &event) {
         auto room = api_->request(
             "POST", "/api/v1/room/join/by_device/" + percentEncode(data.at("deviceId").get<std::string>()),
             {{"force_join", false}});
-        std::string address = room.value("signaling_server", std::string{});
-        if (room.contains("signaling_list") && !room["signaling_list"].empty())
-            address = room["signaling_list"][0].get<std::string>();
-        auto url = signalingUrl(address);
+        auto url = roomSignalUrl(room);
+        if (!room.contains("token") || !room["token"].is_string() ||
+            room["token"].get_ref<const std::string &>().empty())
+            throw std::runtime_error("加入房间未返回信令凭据");
         socket_ = std::make_unique<SignalSocket>(cancel_);
         setState("signaling", "正在连接 UU 信令服务器…");
         socket_->open(url, room.at("token").get<std::string>());
@@ -172,19 +215,27 @@ void Client::pollQr() {
     qrNext_ = nowMs() + 1000;
     if (qrStatus_ == 4) {
         auto login = api_->request("POST", "/api/v1/login/by_qrcode", qr_);
-        api_->login(login);
-        qr_ = nullptr;
-        {
-            std::lock_guard lock(stateMutex_);
-            state_.qrUrl.clear();
-            state_.nickname = login.value("nickname", std::string("UU 用户"));
-        }
-        refresh();
+        completeLogin(login);
     } else if (qrStatus_ == 3) {
         qr_ = nullptr;
         setState("idle", "手机已取消登录，按 A 重试");
     } else if (qrStatus_ == 2)
         setState("login", "扫码成功，请在手机上确认登录");
+}
+void Client::completeLogin(const Json &response) {
+    if (cancel_)
+        throw std::runtime_error("Canceled");
+    auto account = loginAccount(response);
+    api_->login(response);
+    qr_ = nullptr;
+    {
+        std::lock_guard lock(stateMutex_);
+        state_.qrUrl.clear();
+        state_.nickname = account.nickname;
+        state_.loginMode = "qr";
+    }
+    setState("loading", "登录成功，正在同步设备…");
+    refresh();
 }
 void Client::refresh() {
     auto response = api_->request("GET", "/api/v1/device/list");
@@ -327,6 +378,10 @@ void Client::beginPeer(const Json &result) {
             config.iceServers.push_back(std::move(server));
         }
     }
+    setState("rtc-init", "正在初始化原生串流…");
+    diagnostic("rtc-runtime");
+    rtc::Preload();
+    diagnostic("rtc-peer");
     peer_ = std::make_shared<rtc::PeerConnection>(config);
     auto weak = std::weak_ptr<Inbox>(inbox_);
     auto gen = generation_;
@@ -346,6 +401,7 @@ void Client::beginPeer(const Json &result) {
     });
     peer_->onStateChange([post](rtc::PeerConnection::State s) { post("peer-state", int(s)); });
     rtc::Description::Video v("0", rtc::Description::Direction::RecvOnly);
+    diagnostic("rtc-video");
     v.addH264Codec(96, "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f");
     v.setBitrate(5000);
     video_ = peer_->addTrack(v);
@@ -359,6 +415,7 @@ void Client::beginPeer(const Json &result) {
             m->video(reinterpret_cast<const uint8_t *>(data.data()), data.size(), mediaGeneration);
     });
     rtc::Description::Audio a("1", rtc::Description::Direction::RecvOnly);
+    diagnostic("rtc-audio");
     a.addOpusCodec(111);
     audio_ = peer_->addTrack(a);
     auto opus = std::make_shared<rtc::OpusRtpDepacketizer>();
@@ -368,10 +425,12 @@ void Client::beginPeer(const Json &result) {
         if (auto m = media.lock())
             m->audio(reinterpret_cast<const uint8_t *>(data.data()), data.size(), mediaGeneration);
     });
+    diagnostic("rtc-channels");
     for (const auto *label : {"CONTROL_DATA_CHANNEL", "TEXT_DATA_CHANNEL", "STREAMER_DATA_CHANNEL",
                               "FILE_DATA_CHANNEL", "BINARY_DATA_CHANNEL"})
         channels_[label] = peer_->createDataChannel(label);
     setState("connecting", "正在建立音视频通道…");
+    diagnostic("rtc-offer");
     peer_->setLocalDescription();
     for (const auto &e : earlySoac_)
         handleSoac(e);
@@ -432,6 +491,7 @@ void Client::release() {
     heldButtons_.clear();
 }
 void Client::disconnect() {
+    diagnostic("disconnect");
     release();
     ++generation_;
     deadline_ = 0;

@@ -1,9 +1,13 @@
 """Create an SD-card-ready package from an actual built NRO."""
 import hashlib
 import pathlib
+import re
 import shutil
 import zipfile
+
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+version = re.search(r'project\(UURemote-ns VERSION ([\d.]+)',
+                    (ROOT/'CMakeLists.txt').read_text(encoding='utf-8')).group(1)
 source = ROOT/'build-nx/UURemote-ns.nro'
 data = source.read_bytes()
 if data[16:20] != b'NRO0':
@@ -32,7 +36,7 @@ for name,path in notices.items():
         shutil.copy2(ROOT/path,notice_dir/name)
 digest=hashlib.sha256(data).hexdigest()
 (ROOT/'dist/SHA256SUMS').write_text(f'{digest}  switch/UURemote-ns/UURemote-ns.nro\n')
-archive = ROOT/'dist/UURemote-ns-0.1.0-switch.zip'
+archive = ROOT/f'dist/UURemote-ns-{version}-switch.zip'
 with zipfile.ZipFile(archive, 'w', compression=zipfile.ZIP_DEFLATED) as z:
     paths = [destination,ROOT/'dist/README.md',ROOT/'dist/THIRD_PARTY.md',ROOT/'dist/LICENSE',ROOT/'dist/SHA256SUMS']
     paths += list((ROOT/'dist/docs').rglob('*')) + list(notice_dir.glob('*'))

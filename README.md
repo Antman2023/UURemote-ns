@@ -8,16 +8,16 @@
 ![Status](https://img.shields.io/badge/status-experimental-d99a36)
 [![License](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](LICENSE)
 
-[**下载 v0.1.0 实验版**](https://github.com/Antman2023/UURemote-ns/releases/tag/v0.1.0) · [安装使用](#安装使用) · [按键操作](#按键操作) · [源码构建](#源码构建) · [开发记录](docs/development.md)
+[**下载 v0.1.1 实验版**](https://github.com/Antman2023/UURemote-ns/releases/tag/v0.1.1) · [安装使用](#安装使用) · [按键操作](#按键操作) · [源码构建](#源码构建) · [开发记录](docs/development.md)
 
-> **当前为实验版，尚未完成 Switch 真机验证。**
-> 已通过 ARM64 NRO 交叉编译、协议回归和本机原生 WebRTC 回环测试；实际扫码登录、原版电脑连接、NVDEC、音视频与输入表现仍待真机联调。
+> **当前为实验版，串流仍需 Switch 真机联调。**
+> v0.1.1 修复了用户崩溃报告定位到的 ICE 初始化错误，放大登录二维码并新增短信登录。已通过 ARM64 NRO 交叉编译、协议回归和本机原生 WebRTC 回环；修复后的正式电脑互通、短信实收、音视频和输入仍待真机复测。
 
 ## 功能与验证状态
 
 当前源码已接入：
 
-- **账号与设备**：手机扫码登录，同步账号下的电脑，选择在线设备连接。
+- **账号与设备**：大尺寸二维码或短信验证码登录，同步账号下的电脑，选择在线设备连接。
 - **画面与声音**：原生 WebRTC 接收 H.264 / Opus；视频优先尝试 NVDEC，无法使用时回退到软件解码。
 - **Joy-Con 与触屏**：摇杆鼠标、左右键、滚轮、常用按键和触屏拖动。
 - **会话管理**：取消连接、退出账号、连接异常提示，以及失焦或断开时尝试释放输入。
@@ -27,7 +27,9 @@
 | Switch ARM64 交叉编译、NRO 打包与资源段检查 | 通过 |
 | 与参考 Web 实现的签名 / Protobuf 对照、ACK / ICE 和 300 组 WebSocket 数据流测试 | 通过 |
 | 本机原生对端间的 ICE、DTLS、SCTP 二进制输入和 SRTP H.264 接收 | 通过 |
-| Switch 真机启动、正式账号登录和原版电脑互通 | 待验证 |
+| 随机数引擎多线程隔离、状态保留与线程退出清理 | 通过 |
+| Switch 真机连接崩溃报告定位 | 已定位并修复 ICE 随机数状态访问；待真机复测 |
+| 短信实收登录和修复后原版电脑互通 | 待验证 |
 | 真机 NVDEC、声音、输入语义、延迟及长时间稳定性 | 待验证 |
 
 默认请求 **1280 × 720 / 30 FPS / H.264**。Joy-Con 使用键鼠映射，尚未实现 UU 原生虚拟 Xbox 手柄协议。
@@ -36,10 +38,10 @@
 
 准备一台能够运行自制程序的 Nintendo Switch，以及已安装原版 UU远程的电脑和手机。Switch 需要联网；手机与电脑使用同一个 UU 账号。
 
-1. 下载 [SD 卡安装包](https://github.com/Antman2023/UURemote-ns/releases/download/v0.1.0/UURemote-ns-0.1.0-switch.zip)，解压到 SD 卡根目录。
+1. 下载 [SD 卡安装包](https://github.com/Antman2023/UURemote-ns/releases/download/v0.1.1/UURemote-ns-0.1.1-switch.zip)，解压到 SD 卡根目录；更新时覆盖原 NRO。
 2. 在电脑上打开**原版 UU远程电脑端**，登录账号并保持在线。
 3. 在 Switch 上按住 **R** 启动一个游戏，进入完整内存模式的 hbmenu，再打开 **UU Remote NS**。不支持相册小程序模式。
-4. 按 **A** 获取二维码，使用手机官方 UU远程 App 扫码并确认。
+4. 按 **A** 获取大尺寸二维码，使用手机官方 UU远程 App 扫码并确认；也可按 **X** 切换短信登录，输入区号、手机号，发送验证码后输入 6 位验证码并选择「登录」。短信界面用 **↑ / ↓** 选择项目，**A** 打开系统数字键盘或确认，重发需等待 60 秒。
 5. 选择列表中的在线电脑，按 **A** 连接；远程桌面中按 **−** 断开。
 
 安装后的文件位置：
@@ -51,16 +53,18 @@ SD 卡根目录/
         └── UURemote-ns.nro
 ```
 
-也可下载 [单独的 NRO](https://github.com/Antman2023/UURemote-ns/releases/download/v0.1.0/UURemote-ns.nro)，手动放到上述目录。[SHA256SUMS](https://github.com/Antman2023/UURemote-ns/releases/download/v0.1.0/SHA256SUMS) 用于校验 NRO 和安装包。
+也可下载 [单独的 NRO](https://github.com/Antman2023/UURemote-ns/releases/download/v0.1.1/UURemote-ns.nro)，手动放到上述目录。[SHA256SUMS](https://github.com/Antman2023/UURemote-ns/releases/download/v0.1.1/SHA256SUMS) 用于校验 NRO 和安装包。
 
-账号令牌与扫码凭据只保存在内存，重启程序后需要重新登录。SD 卡只保存随机生成的主控 `client-id`；连接时不会强制抢占已有远控会话。
+账号令牌、手机号和验证码只保存在内存，重启程序后需要重新登录。SD 卡保存随机生成的主控 `client-id` 和连接阶段日志 `connection.log`；日志不记录手机号、验证码、令牌、二维码内容或 SDP。连接时不会强制抢占已有远控会话。
 
 ## 按键操作
 
 | 场景 | 按键 | 行为 |
 | --- | --- | --- |
 | 首页 | ↑ / ↓ · A | 选择电脑 · 确认或扫码登录 |
-| 首页 | Y · X · + | 刷新设备 · 退出账号 · 退出程序 |
+| 未登录 / 扫码界面 | X | 切换扫码或短信登录 |
+| 短信登录 | ↑ / ↓ · A | 选择输入项或按钮 · 输入或确认 |
+| 已登录首页 | Y · X · + | 刷新设备 · 退出账号 · 退出程序 |
 | 登录或连接中 | B / − | 取消 |
 | 远程桌面 | 左摇杆 | 移动鼠标 |
 | 远程桌面 | ZR / ZL | 鼠标左键 / 右键 |
@@ -73,12 +77,12 @@ SD 卡根目录/
 
 ## 当前限制
 
-- 仅提供扫码登录；未实现短信登录、应用列表与启动界面、剪贴板或文件传输。
+- 未实现应用列表与启动界面、剪贴板或文件传输。
 - 网络实现支持 IPv4 与 UDP TURN；不支持 TURN TCP / TLS，也没有自动重连。
 - 未实现 H.265、码率 / 分辨率设置和零拷贝显示；NVDEC 路径仍会将硬件帧传回 CPU，转换为 RGBA 后上传 SDL 纹理。
 - 音频尚未实现完整抖动缓冲和音画时钟同步，性能及稳定性需要真机测试。
 
-真机联调可按[开发记录中的检查步骤](docs/development.md#真机检查步骤)进行。反馈问题请附上系统版本、启动模式、网络环境、具体操作和错误提示，避免提交账号令牌或扫码凭据。
+真机联调可按[开发记录中的检查步骤](docs/development.md#真机检查步骤)进行。连接异常时可附上 `switch/UURemote-ns/connection.log`；若程序崩溃，再提供对应 Atmosphère 崩溃报告。原始崩溃报告可能含内存中的凭据，适合私下排查，公开反馈请先脱敏。
 
 ## 源码构建
 
@@ -123,7 +127,7 @@ python3 scripts/package.py
 | 路径 | 内容 |
 | --- | --- |
 | `build-nx/UURemote-ns.nro` | Switch 可执行文件 |
-| `dist/UURemote-ns-0.1.0-switch.zip` | SD 卡安装包、说明和许可证 |
+| `dist/UURemote-ns-0.1.1-switch.zip` | SD 卡安装包、说明和许可证 |
 | `dist/SHA256SUMS` | NRO 与安装包校验值 |
 
 第三方源码版本与 SHA256 记录在 [sources.lock.json](scripts/sources.lock.json)，Windows 工具链包记录在 [sdk-windows.lock.json](scripts/sdk-windows.lock.json)。依赖下载到 `external/`，Horizon 平台补丁由 [patch_deps.py](scripts/patch_deps.py) 应用。

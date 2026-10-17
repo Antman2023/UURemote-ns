@@ -1,4 +1,5 @@
 #pragma once
+#include "auth.hpp"
 #include "media.hpp"
 #include "transport.hpp"
 #include <functional>
@@ -7,10 +8,12 @@
 
 namespace uu {
 struct Snapshot {
-    std::string stage = "idle", detail = "按 A 生成二维码，使用 UU远程 App 扫码", qrUrl, nickname;
+    std::string stage = "idle", detail = "按 A 扫码登录，或按 X 使用短信验证码", qrUrl, nickname;
     Json devices = Json::array();
     bool authenticated = false, streaming = false;
     int width = 1280, height = 720, fps = 30;
+    std::string loginMode = "qr";
+    int64_t smsRetryAt = 0;
 };
 class Client {
     struct Event {
@@ -46,6 +49,7 @@ class Client {
     int64_t deadline_ = 0, lastPacket_ = 0, heartbeatTimeout_ = 45000, qrExpires_ = 0, qrNext_ = 0;
     Json qr_;
     int qrStatus_ = 1;
+    SmsAuth sms_;
     void run();
     void handle(const Event &event);
     void packet(const WsMessage &message);
@@ -60,6 +64,7 @@ class Client {
     void input(const Json &data);
     void release();
     void pollQr();
+    void completeLogin(const Json &response);
     void post(std::string type, Json data = nullptr, uint64_t generation = 0);
 
   public:
