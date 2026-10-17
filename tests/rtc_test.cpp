@@ -1,11 +1,37 @@
+#include "background.hpp"
 #include <chrono>
 #include <condition_variable>
 #include <iostream>
 #include <mutex>
 #include <rtc/rtc.hpp>
 #include <thread>
+#ifdef UU_TEST_NO_DETACH
+#include <atomic>
+#include <cerrno>
+#include <pthread.h>
+std::atomic<int> detachCalls{0};
+extern "C" int __wrap_pthread_detach(pthread_t) {
+    ++detachCalls;
+    return ENOSYS;
+}
+#endif
 
 int main() {
+#ifdef UU_TEST_NO_DETACH
+    // Prove the runtime models Horizon before exercising the library paths.
+    std::thread probe([] {});
+    bool unsupported = false;
+    try {
+        probe.detach();
+    } catch (const std::system_error &error) {
+        unsupported = error.code().value() == ENOSYS;
+    }
+    if (probe.joinable())
+        probe.join();
+    if (!unsupported)
+        return 1;
+    detachCalls = 0;
+#endif
     std::mutex mutex;
     std::condition_variable cv;
     bool input = false, picture = false;
@@ -19,6 +45,9 @@ int main() {
         controller->onLocalDescription([weakHost](rtc::Description sdp) {
             if (auto pc = weakHost.lock()) {
                 pc->setRemoteDescription(sdp);
+                // Non-numeric host must take the resolver path that used detach on Horizon.
+                pc->addRemoteCandidate(
+                    rtc::Candidate("candidate:resolver-test 1 UDP 2122260223 localhost 9 typ host", "0"));
                 pc->setLocalDescription(rtc::Description::Type::Answer);
             }
         });
@@ -86,6 +115,11 @@ int main() {
         host->close();
     }
     rtc::Cleanup().wait();
+    uu::waitBackgroundTasks();
+#ifdef UU_TEST_NO_DETACH
+    if (detachCalls != 0)
+        result = 1;
+#endif
     std::cout << (result
                       ? "WebRTC loopback failed"
                       : "WebRTC loopback passed: ICE, DTLS, SCTP binary input and SRTP H.264 depacketization")

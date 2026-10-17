@@ -1,3 +1,4 @@
+#include "background.hpp"
 #include "client.hpp"
 #include "diagnostics.hpp"
 #include "qrcodegen.hpp"
@@ -209,11 +210,8 @@ int main(int, char **) {
 #endif
             if (key.size() != 24)
                 throw std::runtime_error("Missing signing.key: run scripts/extract_key.py and rebuild");
-            uu::diagnostic("app-start-0.1.1");
-            std::set_terminate([] {
-                uu::diagnostic("runtime-terminate");
-                std::abort();
-            });
+            uu::diagnostic("app-start-0.1.2");
+            std::set_terminate(uu::terminateWithDiagnostics);
             std::string id = read(profile);
             if (id.size() != 36) {
                 id = uu::uuid();
@@ -619,6 +617,7 @@ int main(int, char **) {
                     SDL_DestroyTexture(video);
             }
             rtc::Cleanup().wait();
+            uu::waitBackgroundTasks();
             media.reset();
             SDL_DestroyRenderer(renderer);
             SDL_DestroyWindow(window);
@@ -628,6 +627,13 @@ int main(int, char **) {
         SDL_Quit();
     } catch (const std::exception &e) {
         result = 1;
+        uu::diagnosticException("main-exception", std::current_exception());
+        try {
+            rtc::Cleanup().wait();
+            uu::waitBackgroundTasks();
+        } catch (...) {
+            uu::diagnosticException("cleanup-exception", std::current_exception());
+        }
 #ifdef __SWITCH__
         SDL_Quit();
         consoleInit(nullptr);

@@ -16,7 +16,9 @@ Switch NRO
 
 `source/client.cpp` 在单个工作线程中处理 API、信令和用户命令。WebRTC 回调只向队列写入带连接代次的事件；断开时使旧代次失效。媒体回调使用独立的媒体代次检查，防止重连后收到旧画面。退出前关闭连接并等待 `rtc::Cleanup()`，然后释放网络服务。
 
-`source/auth.cpp` 校验登录响应和短信参数，复用参考 Web 端的验证码发送与登录 API，成功发送后限制 60 秒内重发。`source/diagnostics.cpp` 仅将固定连接阶段名称写入 SD 卡日志，文件超过 128 KiB 后重建。
+`source/auth.cpp` 校验登录响应和短信参数，复用参考 Web 端的验证码发送与登录 API，成功发送后限制 60 秒内重发。`source/diagnostics.cpp` 将固定连接阶段写入 SD 卡日志，异常时附加类型、数值错误码和最多 16 帧代码偏移；文件超过 128 KiB 后重建，不记录异常消息原文或协议数据。
+
+`source/background.cpp` 为候选地址解析和 RTC 清理保留异步任务的共享 future；完成后回收线程，正常或异常退出时均在关闭网络服务前等待剩余任务。Switch 不使用 `std::thread::detach`。
 
 `source/media.cpp` 在独立解码线程上处理有界视频队列，使用 AVPacket 自有缓冲与 FFmpeg 所需 padding；显示线程只读取最新帧。音频积压超过 200 ms 时清空队列。这个初版没有完整的 RTP 重传策略、音频 jitter buffer 或音画同步；不能推定为稳定的游戏串流客户端。
 
@@ -42,6 +44,7 @@ Switch NRO
 - 短信 API 参数、冷却时间、失败重试、前导零验证码和登录响应校验通过模拟请求测试；未发送真实短信。
 - 使用实际 qrcodegen 编码器与新版布局生成 477×477 像素的合成登录二维码，经图像解码恢复出完整原始 URL；手机实扫仍需真机复测。
 - Horizon 使用的 pthread 随机数分支通过 8 线程并发初始化、状态保留、线程隔离和退出清理测试。
+- 在 GNU 本机回环中将 `pthread_detach` 强制替换为返回 ENOSYS，先验证 `std::thread::detach` 确实抛错，再验证域名候选解析、ICE / DTLS / SCTP / SRTP 和清理全程不调用 detach。后台任务并发、嵌套、移动参数、异常保留及退出等待测试通过。
 - NRO0 与 ASET 资源段检查、ZIP CRC 和包内 NRO 一致性检查通过。
 - 已收到用户真机连接阶段崩溃报告并完成符号定位；修复后的正式房间互通、短信实收、NVDEC、实际音视频与键鼠表现仍需真机复测。
 
@@ -52,6 +55,14 @@ Switch NRO
 故障指令位于 ICE 服务器随机排序前，访问模板函数中的 `thread_local` 随机数状态；该构建生成了错误的 `[thread_pointer + thread_pointer]` 地址。v0.1.1 在 Horizon 上使用 pthread key 保存每线程引擎，在线程退出时释放；其他平台保留原实现。已确认修复后的 ICE 目标文件调用 `pthread_getspecific` / `pthread_setspecific`，不再含原先的 `__aarch64_read_tp` 访问。补丁由 `scripts/patch_deps.py` 重复应用，不改动上游锁定版本。
 
 每版排查应保存对应的 `build-nx/UURemote-ns.elf` 与 `.map`，并核对 Build ID。原始用户崩溃报告不纳入仓库或发布包。
+
+## v0.1.1 连接后异常终止排查
+
+用户截图显示 `2345-0008 (0x1159)`，但 PC 和回溯均为零。连接日志表明已执行 `rtc-offer`，约 5 秒后进入 `runtime-terminate`；因此该截图不足以定位最初异常。
+
+检查发布版二进制发现 `pthread_detach` 固定返回 88（ENOSYS），而上游在解析非数值 ICE 候选地址和清理 RTC 运行时时调用 `std::thread::detach`。分离失败后，仍可 join 的线程在析构时触发 terminate。v0.1.2 用保留共享 future 的异步任务替换这两处，确认最终 Switch ELF 不再含 `pthread_detach` / `std::thread::detach`。
+
+该兼容缺陷已通过禁用 detach 的本机回环覆盖；是否就是用户此次异常的直接触发点，仍需真机复测。终止处理器现在记录异常类型、数值错误码和代码偏移，再直接退出进程，避免 libc 的全局清理与仍在呈现画面的 UI 线程发生竞争。
 
 ## 参考
 

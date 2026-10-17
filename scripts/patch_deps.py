@@ -67,6 +67,23 @@ replace(Path('src/impl/utils.hpp'), '''	static thread_local std::seed_seq seed =
 	return random_engine_wrapper<Generator, Result>{engine};
 #endif''')
 replace(Path('src/impl/socket.hpp'), '#include <ifaddrs.h>', '#ifndef __SWITCH__\n#include <ifaddrs.h>\n#endif')
+# newlib on Horizon implements pthread_join, but pthread_detach returns ENOSYS.
+# Both resolver and runtime-cleanup threads need retained ownership until joined.
+for path in (Path('src/impl/peerconnection.cpp'), Path('src/impl/init.cpp')):
+    replace(path, '#include "utils.hpp"', '''#include "utils.hpp"
+#if defined(__SWITCH__) || defined(UU_MANAGED_THREADS_TEST)
+#include "background.hpp"
+#endif''')
+    # An async shared future owns and joins the thread. Keep upstream behavior elsewhere.
+    replace(path, 'std::thread t(', '''#if defined(__SWITCH__) || defined(UU_MANAGED_THREADS_TEST)
+        uu::backgroundTask(
+#else
+        std::thread t(
+#endif
+''')
+    replace(path, 't.detach();', '''#if !defined(__SWITCH__) && !defined(UU_MANAGED_THREADS_TEST)
+        t.detach();
+#endif''')
 # Use the socket-based wakeup path on Horizon; it has no POSIX pipe device.
 replace(Path('deps/libjuice/src/conn_poll.c'), '#ifdef _WIN32', '#if defined(_WIN32) || defined(__SWITCH__)')
 replace(Path('deps/libjuice/src/conn_poll.c'), '#ifndef _WIN32', '#if !defined(_WIN32) && !defined(__SWITCH__)')
