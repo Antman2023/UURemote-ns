@@ -8,10 +8,10 @@
 ![Status](https://img.shields.io/badge/status-experimental-d99a36)
 [![License](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](LICENSE)
 
-[**下载 v0.1.6 实验版**](https://github.com/Antman2023/UURemote-ns/releases/tag/v0.1.6) · [安装使用](#安装使用) · [按键操作](#按键操作) · [源码构建](#源码构建) · [开发记录](docs/development.md)
+[**下载 v0.1.7 实验版**](https://github.com/Antman2023/UURemote-ns/releases/tag/v0.1.7) · [安装使用](#安装使用) · [按键操作](#按键操作) · [源码构建](#源码构建) · [开发记录](docs/development.md)
 
 > **当前为实验版，串流仍需 Switch 真机联调。**
-> v0.1.6 修复持续读取信令时 RTC 状态处理延迟、可能先触发超时的问题，并在 Switch TLS 数据读写入口显式保证非阻塞。v0.1.5 真机已收到 Answer 和候选，正式电脑互通仍待复测。保留大二维码、短信登录、首页版本号及分层脱敏诊断。
+> v0.1.7 修复异常时命令丢失、媒体资源清理、重连旧帧和超时计时，并增加音频设备及播放错误提示。Windows 调试版已显示正式电脑端画面并完成两次重连；Switch 真机互通仍待复测。保留大二维码、短信登录及分层脱敏诊断。
 
 ## 功能与验证状态
 
@@ -45,9 +45,9 @@
 
 准备一台能够运行自制程序的 Nintendo Switch，以及已安装原版 UU远程的电脑和手机。Switch 需要联网；手机与电脑使用同一个 UU 账号。
 
-1. 下载 [SD 卡安装包](https://github.com/Antman2023/UURemote-ns/releases/download/v0.1.6/UURemote-ns-0.1.6-switch.zip)，解压到 SD 卡根目录；更新时覆盖原 NRO。
+1. 下载 [SD 卡安装包](https://github.com/Antman2023/UURemote-ns/releases/download/v0.1.7/UURemote-ns-0.1.7-switch.zip)，解压到 SD 卡根目录；更新时覆盖原 NRO。
 2. 在电脑上打开**原版 UU远程电脑端**，登录账号并保持在线。
-3. 更新后先退出旧程序。在 Switch 上按住 **R** 启动一个游戏，进入完整内存模式的 hbmenu，再打开 **UU Remote NS**。首页应显示 **v0.1.6**；若没有，请检查是否启动了其他目录的旧副本。不支持相册小程序模式。
+3. 更新后先退出旧程序。在 Switch 上按住 **R** 启动一个游戏，进入完整内存模式的 hbmenu，再打开 **UU Remote NS**。首页应显示 **v0.1.7**；若没有，请检查是否启动了其他目录的旧副本。不支持相册小程序模式。
 4. 按 **A** 获取大尺寸二维码，使用手机官方 UU远程 App 扫码并确认；也可按 **X** 切换短信登录，输入区号、手机号，发送验证码后输入 6 位验证码并选择「登录」。短信界面用 **↑ / ↓** 选择项目，**A** 打开系统数字键盘或确认，重发需等待 60 秒。
 5. 选择列表中的在线电脑，按 **A** 连接；远程桌面中按 **−** 断开。
 
@@ -60,7 +60,7 @@ SD 卡根目录/
         └── UURemote-ns.nro
 ```
 
-也可下载 [单独的 NRO](https://github.com/Antman2023/UURemote-ns/releases/download/v0.1.6/UURemote-ns.nro)，手动放到上述目录。[SHA256SUMS](https://github.com/Antman2023/UURemote-ns/releases/download/v0.1.6/SHA256SUMS) 用于校验 NRO 和安装包。
+也可下载 [单独的 NRO](https://github.com/Antman2023/UURemote-ns/releases/download/v0.1.7/UURemote-ns.nro)，手动放到上述目录。[SHA256SUMS](https://github.com/Antman2023/UURemote-ns/releases/download/v0.1.7/SHA256SUMS) 用于校验 NRO 和安装包。
 
 账号令牌、手机号和验证码只保存在内存，重启程序后需要重新登录。SD 卡保存随机生成的主控 `client-id` 和连接阶段日志 `connection.log`，包含 ICE / 信令状态、DTLS / SCTP 握手阶段及允许记录的数值错误码；异常终止时还记录异常类型和代码偏移。不记录原始库日志、网络地址、手机号、验证码、令牌、二维码内容、SDP 或数据通道消息。连接时不会强制抢占已有远控会话。
 
@@ -134,7 +134,7 @@ python3 scripts/package.py
 | 路径 | 内容 |
 | --- | --- |
 | `build-nx/UURemote-ns.nro` | Switch 可执行文件 |
-| `dist/UURemote-ns-0.1.6-switch.zip` | SD 卡安装包、说明和许可证 |
+| `dist/UURemote-ns-0.1.7-switch.zip` | SD 卡安装包、说明和许可证 |
 | `dist/SHA256SUMS` | NRO 与安装包校验值 |
 
 第三方源码版本与 SHA256 记录在 [sources.lock.json](scripts/sources.lock.json)，Windows 工具链包记录在 [sdk-windows.lock.json](scripts/sdk-windows.lock.json)。依赖下载到 `external/`，Horizon 平台补丁由 [patch_deps.py](scripts/patch_deps.py) 应用。
@@ -170,7 +170,7 @@ python scripts/bootstrap_native_sdk.py
 
 按 Enter 确认、方向键选择电脑、Esc 返回、Y 刷新、F2 断开、F10 退出。当前本机登录使用二维码，短信数字输入界面尚未实现。Windows 版已完成扫码登录、与原版电脑端建立 ICE / DTLS / SCTP、显示远程画面和两次断开重连；真实声音播放、完整输入语义和 Switch 真机仍需继续验证。
 
-本机构建目前包含尚未发布的事件恢复、媒体清理和计时修复；GitHub v0.1.6 下载包不含这些后续修改。所有日志和账号状态均留在本地，测试素材只使用合成画面。
+v0.1.7 包含事件恢复、媒体清理、计时和音频错误提示修复。所有日志和账号状态均留在本地，测试素材只使用合成画面。
 
 ## 技术结构
 

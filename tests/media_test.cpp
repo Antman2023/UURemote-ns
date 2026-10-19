@@ -11,6 +11,26 @@ extern "C" {
 #ifdef UU_MEDIA_FAULT_TEST
 std::atomic<int> liveFrames{0}, liveContexts{0}, livePackets{0};
 std::atomic<bool> failFrame{false}, failScaler{false}, failOpus{false};
+std::atomic<bool> failAudioOpen{false}, failAudioQueue{false};
+std::atomic<unsigned> queuedBytes{0};
+extern "C" SDL_AudioDeviceID __real_SDL_OpenAudioDevice(const char *, int, const SDL_AudioSpec *,
+                                                        SDL_AudioSpec *, int);
+extern "C" int __real_SDL_QueueAudio(SDL_AudioDeviceID, const void *, Uint32);
+extern "C" SDL_AudioDeviceID __wrap_SDL_OpenAudioDevice(const char *name, int capture,
+                                                        const SDL_AudioSpec *desired, SDL_AudioSpec *obtained,
+                                                        int changes) {
+    if (failAudioOpen.exchange(false))
+        return 0;
+    return __real_SDL_OpenAudioDevice(name, capture, desired, obtained, changes);
+}
+extern "C" int __wrap_SDL_QueueAudio(SDL_AudioDeviceID device, const void *data, Uint32 size) {
+    if (failAudioQueue.exchange(false))
+        return -1;
+    const auto result = __real_SDL_QueueAudio(device, data, size);
+    if (result == 0)
+        queuedBytes += size;
+    return result;
+}
 extern "C" AVFrame *__real_av_frame_alloc();
 extern "C" void __real_av_frame_free(AVFrame **);
 extern "C" AVCodecContext *__real_avcodec_alloc_context3(const AVCodec *);
@@ -110,8 +130,28 @@ int main(int argc, char **argv) {
             waitFor([&] { return media.picture(picture.serial).serial > picture.serial; });
             const uint8_t silence[] = {0xf8, 0xff, 0xfe};
             media.audio(silence, sizeof(silence), media.generation());
+#ifdef UU_MEDIA_FAULT_TEST
+            check(queuedBytes == 960 * 2 * sizeof(int16_t), "Opus PCM did not reach SDL audio queue");
+            const auto bytes = queuedBytes.load();
+            media.audio(silence, sizeof(silence), generation);
+            check(queuedBytes == bytes, "Old connection audio reached playback");
+            failAudioQueue = true;
+            media.audio(silence, sizeof(silence), media.generation());
+            check(!failAudioQueue && media.status().find("音频播放失败") != std::string::npos,
+                  "Audio queue failure was hidden");
+            media.audio(silence, sizeof(silence), media.generation());
+            check(media.status().empty(), "Successful audio retry retained stale error");
+#endif
         }
 #ifdef UU_MEDIA_FAULT_TEST
+        failAudioOpen = true;
+        {
+            uu::Media media;
+            check(!failAudioOpen && media.status().find("音频设备不可用") != std::string::npos,
+                  "Audio device failure was hidden");
+            feed(media, frame, media.generation());
+            waitFor([&] { return media.picture(0).serial != 0; });
+        }
         failFrame = true;
         {
             uu::Media media;

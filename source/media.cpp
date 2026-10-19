@@ -37,6 +37,8 @@ struct Media::Impl {
     uint64_t serial = 0;
     std::atomic<uint64_t> generation{1};
     std::atomic<bool> decoderFailed{false};
+    enum class AudioStatus { Ready, Unavailable, QueueFailed };
+    std::atomic<AudioStatus> audioStatus{AudioStatus::Ready};
     Impl() {
         try {
             SDL_AudioSpec spec{};
@@ -45,6 +47,8 @@ struct Media::Impl {
             spec.channels = 2;
             spec.samples = 960;
             audioDevice = SDL_OpenAudioDevice(nullptr, 0, &spec, nullptr, 0);
+            if (!audioDevice)
+                audioStatus = AudioStatus::Unavailable;
             int code = 0;
             opus = opus_decoder_create(48000, 2, &code);
             if (code != OPUS_OK)
@@ -217,7 +221,9 @@ void Media::audio(const uint8_t *data, size_t size, uint64_t generation) {
     if (samples > 0 && impl_->audioDevice) {
         if (SDL_GetQueuedAudioSize(impl_->audioDevice) > 48000 * 4 / 5)
             SDL_ClearQueuedAudio(impl_->audioDevice);
-        SDL_QueueAudio(impl_->audioDevice, pcm.data(), samples * 4);
+        impl_->audioStatus = SDL_QueueAudio(impl_->audioDevice, pcm.data(), samples * 4) == 0
+                                 ? Impl::AudioStatus::Ready
+                                 : Impl::AudioStatus::QueueFailed;
     }
 }
 Picture Media::picture(uint64_t after) {
@@ -245,8 +251,16 @@ uint64_t Media::generation() const {
 }
 std::string Media::status() {
     std::lock_guard lock(impl_->mutex);
-    if (impl_->decoderFailed.load() && impl_->error.empty())
-        return "视频解码已停止，请退出程序后重试";
-    return impl_->error;
+    auto status = impl_->error;
+    if (impl_->decoderFailed.load())
+        status = "视频解码已停止，请退出程序后重试";
+    const auto audio = impl_->audioStatus.load();
+    if (audio != Impl::AudioStatus::Ready) {
+        if (!status.empty())
+            status += " · ";
+        status += audio == Impl::AudioStatus::Unavailable ? "音频设备不可用，请退出程序后重试"
+                                                          : "音频播放失败，正在重试";
+    }
+    return status;
 }
 } // namespace uu
