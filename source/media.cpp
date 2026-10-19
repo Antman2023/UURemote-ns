@@ -1,4 +1,5 @@
 #include "media.hpp"
+#include "diagnostics.hpp"
 #include <opus.h>
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -8,6 +9,21 @@ extern "C" {
 #include <stdexcept>
 
 namespace uu {
+namespace {
+struct DecoderResources {
+    AVCodecContext *context = nullptr;
+    AVFrame *frame = nullptr, *cpu = nullptr;
+    AVPacket *packet = nullptr;
+    SwsContext *scaler = nullptr;
+    ~DecoderResources() {
+        sws_freeContext(scaler);
+        av_packet_free(&packet);
+        av_frame_free(&cpu);
+        av_frame_free(&frame);
+        avcodec_free_context(&context);
+    }
+};
+} // namespace
 struct Media::Impl {
     std::mutex mutex, audioMutex;
     std::condition_variable cv;
@@ -20,20 +36,35 @@ struct Media::Impl {
     std::string error;
     uint64_t serial = 0;
     std::atomic<uint64_t> generation{1};
+    std::atomic<bool> decoderFailed{false};
     Impl() {
-        SDL_AudioSpec spec{};
-        spec.freq = 48000;
-        spec.format = AUDIO_S16SYS;
-        spec.channels = 2;
-        spec.samples = 960;
-        audioDevice = SDL_OpenAudioDevice(nullptr, 0, &spec, nullptr, 0);
-        int code = 0;
-        opus = opus_decoder_create(48000, 2, &code);
-        if (code != OPUS_OK)
-            throw std::runtime_error("Opus decoder initialization failed");
-        if (audioDevice)
-            SDL_PauseAudioDevice(audioDevice, 0);
-        thread = std::thread([this] { decode(); });
+        try {
+            SDL_AudioSpec spec{};
+            spec.freq = 48000;
+            spec.format = AUDIO_S16SYS;
+            spec.channels = 2;
+            spec.samples = 960;
+            audioDevice = SDL_OpenAudioDevice(nullptr, 0, &spec, nullptr, 0);
+            int code = 0;
+            opus = opus_decoder_create(48000, 2, &code);
+            if (code != OPUS_OK)
+                throw std::runtime_error("Opus decoder initialization failed");
+            if (audioDevice)
+                SDL_PauseAudioDevice(audioDevice, 0);
+            thread = std::thread([this] {
+                try {
+                    decode();
+                } catch (...) {
+                    decoderFailed = true;
+                    diagnosticException("video-decode-exception", std::current_exception());
+                }
+            });
+        } catch (...) {
+            if (audioDevice)
+                SDL_CloseAudioDevice(audioDevice);
+            opus_decoder_destroy(opus);
+            throw;
+        }
     }
     ~Impl() {
         {
@@ -61,15 +92,17 @@ struct Media::Impl {
     }
     void decode() {
         const auto *codec = avcodec_find_decoder(AV_CODEC_ID_H264);
-        auto *ctx = avcodec_alloc_context3(codec);
-        auto *frame = av_frame_alloc();
-        auto *cpu = av_frame_alloc();
-        auto *packet = av_packet_alloc();
-        SwsContext *sws = nullptr;
+        DecoderResources resources;
+        auto *ctx = resources.context = avcodec_alloc_context3(codec);
+        auto *frame = resources.frame = av_frame_alloc();
+        auto *cpu = resources.cpu = av_frame_alloc();
+        auto *packet = resources.packet = av_packet_alloc();
+        auto *&sws = resources.scaler;
         if (!ctx || !frame || !cpu || !packet) {
             std::lock_guard lock(mutex);
             error = "视频解码器内存不足";
-            goto done;
+            decoderFailed = true;
+            return;
         }
         ctx->thread_count = 2;
         ctx->flags |= AV_CODEC_FLAG_LOW_DELAY;
@@ -83,7 +116,8 @@ struct Media::Impl {
         if (avcodec_open2(ctx, codec, nullptr) < 0) {
             std::lock_guard lock(mutex);
             error = "无法初始化 H.264 解码器";
-            goto done;
+            decoderFailed = true;
+            return;
         }
         while (true) {
             Bytes data;
@@ -153,18 +187,12 @@ struct Media::Impl {
             if (result >= 0)
                 drain();
         }
-    done:
-        sws_freeContext(sws);
-        av_packet_free(&packet);
-        av_frame_free(&cpu);
-        av_frame_free(&frame);
-        avcodec_free_context(&ctx);
     }
 };
 Media::Media() : impl_(std::make_unique<Impl>()) {}
 Media::~Media() = default;
 void Media::video(const uint8_t *data, size_t size, uint64_t generation) {
-    if (!size || size > 2 * 1024 * 1024)
+    if (!size || size > 2 * 1024 * 1024 || impl_->decoderFailed.load())
         return;
     {
         std::lock_guard lock(impl_->mutex);
@@ -197,9 +225,11 @@ Picture Media::picture(uint64_t after) {
     return impl_->latest.serial > after ? impl_->latest : Picture{};
 }
 void Media::reset() {
-    impl_->generation.fetch_add(1);
     {
         std::lock_guard lock(impl_->mutex);
+        // The decoder reads the generation while removing queued frames under
+        // this lock. Advancing it earlier could relabel an old queued frame.
+        impl_->generation.fetch_add(1);
         impl_->queue.clear();
         impl_->latest = {};
         impl_->clear = true;
@@ -215,6 +245,8 @@ uint64_t Media::generation() const {
 }
 std::string Media::status() {
     std::lock_guard lock(impl_->mutex);
+    if (impl_->decoderFailed.load() && impl_->error.empty())
+        return "视频解码已停止，请退出程序后重试";
     return impl_->error;
 }
 } // namespace uu

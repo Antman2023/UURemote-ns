@@ -436,7 +436,7 @@ int main(int, char **) {
                                         padUpdate(&pad);
                                         lastHeld = padGetButtons(&pad);
 #endif
-                                    } else if (sms.selected == 3 && uu::nowMs() >= state.smsRetryAt) {
+                                    } else if (sms.selected == 3 && uu::monotonicMs() >= state.smsRetryAt) {
                                         client.command("sms-code", sms.credentials());
                                         sms.selected = 2;
                                     } else if (sms.selected == 4)
@@ -532,8 +532,8 @@ int main(int, char **) {
                                 text(renderer, fonts.normal, values[field], xs[field] + 18, 334, white,
                                      widths[field] - 30);
                             }
-                            int remaining =
-                                int(std::max<int64_t>(0, (state.smsRetryAt - uu::nowMs() + 999) / 1000));
+                            int remaining = int(
+                                std::max<int64_t>(0, (state.smsRetryAt - uu::monotonicMs() + 999) / 1000));
                             rect(renderer, 80, 424, 500, 68,
                                  sms.selected == 3 ? accent : SDL_Color{28, 40, 49, 255});
                             rect(renderer, 660, 424, 520, 68,

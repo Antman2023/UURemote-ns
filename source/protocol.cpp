@@ -15,6 +15,11 @@ int64_t nowMs() {
                std::chrono::system_clock::now().time_since_epoch())
         .count();
 }
+int64_t monotonicMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
 static std::string hex(const uint8_t *bytes, size_t size) {
     static constexpr char chars[] = "0123456789abcdef";
     std::string out;

@@ -25,6 +25,8 @@ std::string signalingUrl(const std::string &source);
 std::string uuid();
 Bytes randomBytes(size_t size);
 int64_t nowMs();
+// Elapsed-time deadlines must not follow wall-clock/NTP adjustments.
+int64_t monotonicMs();
 std::string base64(const uint8_t *data, size_t size);
 std::string percentEncode(const std::string &value);
 

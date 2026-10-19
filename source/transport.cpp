@@ -37,6 +37,14 @@ void common(CURL *c, std::atomic<bool> &cancel, int timeout) {
     curl_easy_setopt(c, CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(c, CURLOPT_SSL_VERIFYPEER, 1L);
     curl_easy_setopt(c, CURLOPT_SSL_VERIFYHOST, 2L);
+#if defined(_WIN32) && defined(CURLSSLOPT_NATIVE_CA)
+    // A relocated MinGW curl may point at an absent build-time CA bundle.
+    // Use Windows trust roots while retaining chain and hostname verification.
+    if (curl_easy_setopt(c, CURLOPT_SSL_OPTIONS, long(CURLSSLOPT_NATIVE_CA)) != CURLE_OK)
+        throw std::runtime_error("Cannot configure Windows certificate trust");
+    curl_easy_setopt(c, CURLOPT_CAINFO, static_cast<const char *>(nullptr));
+    curl_easy_setopt(c, CURLOPT_CAPATH, static_cast<const char *>(nullptr));
+#endif
     curl_easy_setopt(c, CURLOPT_XFERINFOFUNCTION, progress);
     curl_easy_setopt(c, CURLOPT_XFERINFODATA, &cancel);
     curl_easy_setopt(c, CURLOPT_NOPROGRESS, 0L);
@@ -139,11 +147,11 @@ void SignalSocket::write(const Bytes &data) {
     while (p < data.size()) {
         if (cancel_)
             throw std::runtime_error("Canceled");
+        if (std::chrono::steady_clock::now() >= end)
+            throw std::runtime_error("Signaling write timeout");
         size_t n = 0;
         auto code = curl_easy_send(curl_, data.data() + p, data.size() - p, &n);
         if (code == CURLE_AGAIN) {
-            if (std::chrono::steady_clock::now() > end)
-                throw std::runtime_error("Signaling write timeout");
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
             continue;
         }
@@ -179,12 +187,12 @@ void SignalSocket::open(const std::string &url, const std::string &token) {
     while (response.find("\r\n\r\n") == std::string::npos) {
         if (cancel_)
             throw std::runtime_error("Canceled");
+        if (std::chrono::steady_clock::now() >= end)
+            throw std::runtime_error("WebSocket handshake timeout");
         char buf[8192];
         size_t n = 0;
         code = curl_easy_recv(curl_, buf, sizeof(buf), &n);
         if (code == CURLE_AGAIN) {
-            if (std::chrono::steady_clock::now() > end)
-                throw std::runtime_error("WebSocket handshake timeout");
             std::this_thread::sleep_for(std::chrono::milliseconds(2));
             continue;
         }

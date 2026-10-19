@@ -1,5 +1,6 @@
 #include "client.hpp"
 #include "diagnostics.hpp"
+#include "event_queue.hpp"
 #include "rtc_diagnostics.hpp"
 #include "rtc_signaling.hpp"
 #include "signal_pump.hpp"
@@ -39,18 +40,13 @@ void Client::command(const std::string &name, Json data) {
     post(name, std::move(data));
 }
 void Client::drainEvents() {
-    std::deque<Event> events;
-    {
-        std::lock_guard lock(inbox_->mutex);
-        events.swap(inbox_->events);
-    }
-    for (const auto &e : events) {
-        if (stop_)
-            break;
-        if (e.generation && e.generation != generation_)
-            continue;
-        handle(e);
-    }
+    drainEventBatch(
+        inbox_->events, inbox_->mutex, [this] { return stop_.load(); },
+        [this](const Event &e) {
+            if (e.generation && e.generation != generation_)
+                return;
+            handle(e);
+        });
 }
 void Client::run() {
     while (!stop_) {
@@ -66,9 +62,9 @@ void Client::run() {
             if (socket_) {
                 pumpSignaling(
                     [this](WsMessage &m) {
-                        const auto start = nowMs();
+                        const auto start = monotonicMs();
                         const bool received = socket_->receive(m);
-                        const auto elapsed = nowMs() - start;
+                        const auto elapsed = monotonicMs() - start;
                         if (elapsed >= 100)
                             diagnostic(("signal-read-slow-ms-" + std::to_string(elapsed)).c_str());
                         return received;
@@ -80,21 +76,21 @@ void Client::run() {
                         std::lock_guard lock(inbox_->mutex);
                         return !inbox_->events.empty();
                     },
-                    [] { return nowMs(); });
+                    [] { return monotonicMs(); });
                 // Connected/failed callbacks may arrive while processing SDP/ICE.
                 // Apply them before the deadline, including callbacks queued at its boundary.
                 drainEvents();
-                if (socket_ && nowMs() - lastPacket_ > heartbeatTimeout_)
+                if (socket_ && monotonicMs() - lastPacket_ > heartbeatTimeout_)
                     throw std::runtime_error("信令心跳超时");
             }
-            if (deadline_ && nowMs() > deadline_) {
+            if (deadline_ && monotonicMs() > deadline_) {
                 if (peer_) {
                     diagnostic(("timeout-peer-state-" + std::to_string(int(peer_->state()))).c_str());
                     diagnostic(("timeout-ice-state-" + std::to_string(int(peer_->iceState()))).c_str());
                 }
                 throw std::runtime_error("连接超时，请检查电脑和网络后重试");
             }
-            if (!qr_.is_null() && nowMs() >= qrNext_)
+            if (!qr_.is_null() && monotonicMs() >= qrNext_)
                 pollQr();
         } catch (const std::exception &error) {
             if (stop_)
@@ -135,8 +131,8 @@ void Client::handle(const Event &event) {
         qr_ = api_->request("POST", "/api/v1/qrcode/gen/login");
         if (!qr_.is_object() || !qr_.contains("token") || !qr_.contains("qrcode_jump_url"))
             throw std::runtime_error("登录二维码响应不完整");
-        qrExpires_ = nowMs() + 180000;
-        qrNext_ = nowMs() + 1000;
+        qrExpires_ = monotonicMs() + 180000;
+        qrNext_ = monotonicMs() + 1000;
         qrStatus_ = 1;
         {
             std::lock_guard lock(stateMutex_);
@@ -159,7 +155,7 @@ void Client::handle(const Event &event) {
         };
         if (e == "sms-code") {
             setState("sms-sending", "正在发送短信验证码…");
-            sms_.sendCode(request, data, nowMs());
+            sms_.sendCode(request, data, monotonicMs());
             {
                 std::lock_guard lock(stateMutex_);
                 state_.smsRetryAt = sms_.retryAt();
@@ -208,8 +204,8 @@ void Client::handle(const Event &event) {
         socket_ = std::make_unique<SignalSocket>(cancel_);
         setState("signaling", "正在连接 UU 信令服务器…");
         socket_->open(url, room.at("token").get<std::string>());
-        lastPacket_ = nowMs();
-        deadline_ = nowMs() + 45000;
+        lastPacket_ = monotonicMs();
+        deadline_ = monotonicMs() + 45000;
     } else if (e == "input") {
         input(data);
     } else if (e == "release") {
@@ -251,7 +247,7 @@ void Client::handle(const Event &event) {
         throw std::runtime_error(data.get<std::string>());
 }
 void Client::pollQr() {
-    if (nowMs() > qrExpires_) {
+    if (monotonicMs() > qrExpires_) {
         qr_ = nullptr;
         {
             std::lock_guard lock(stateMutex_);
@@ -264,7 +260,7 @@ void Client::pollQr() {
     data["login_status"] = qrStatus_;
     auto result = api_->request("POST", "/api/v1/qrcode/login/status", data, 65000);
     qrStatus_ = result.value("login_status", 1);
-    qrNext_ = nowMs() + 1000;
+    qrNext_ = monotonicMs() + 1000;
     if (qrStatus_ == 4) {
         auto login = api_->request("POST", "/api/v1/login/by_qrcode", qr_);
         completeLogin(login);
@@ -327,7 +323,7 @@ void Client::emit(const std::string &name, const Json &data, const std::string &
         socket_->sendBinary(attachment);
 }
 void Client::packet(const WsMessage &message) {
-    lastPacket_ = nowMs();
+    lastPacket_ = monotonicMs();
     if (message.opcode == 2) {
         if (remainingAttachments_ <= 0)
             throw std::runtime_error("Unexpected signaling attachment");
