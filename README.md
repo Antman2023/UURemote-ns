@@ -145,7 +145,9 @@ python3 scripts/package.py
 
 推送到 `main` 或在 `main` 手动运行 **Build Switch** 时，Actions 使用锁定的 Windows 工具链生成 NRO、SD 卡安装包和 `SHA256SUMS`。构建完成后，在对应运行的 **Artifacts** 中下载。提交到 `main` 的 Pull Request 会编译 ARM64 ELF，供合并前检查。
 
-推送 `vX.Y.Z` 标签会触发同一构建，并在校验产物后创建 GitHub 预发布。标签必须指向 `main` 上的提交，版本须与 `CMakeLists.txt` 中的 `project` 版本一致。发布页会附带 NRO、SD 卡安装包和 `SHA256SUMS`，并自动生成变更说明。
+推送 `vX.Y.Z` 标签会触发同一构建，并在校验产物后创建 GitHub 预发布。与 `main` 一起推送并指向同一提交的版本标签也会发布。标签必须指向 `main` 上的提交，版本须与 `CMakeLists.txt` 中的 `project` 版本一致。发布页会附带 NRO、SD 卡安装包和 `SHA256SUMS`，并自动生成变更说明。
+
+补发已有标签时，在 `main` 上手动运行 **Build Switch**，将 `release_tag` 设为要发布的标签。Actions 会检出该标签的提交并打包。
 
 首次配置时，从自己提供的 APK 提取 `romfs/signing.key`，然后在仓库根目录使用已登录的 GitHub CLI 创建 `UU_SIGNING_KEY_BASE64` Actions Secret。
 

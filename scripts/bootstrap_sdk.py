@@ -5,17 +5,33 @@ import json
 import pathlib
 import sys
 import tarfile
+import time
 import urllib.request
+from urllib.error import HTTPError, URLError
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+
+def download(package):
+    request = urllib.request.Request(package['url'], headers={'User-Agent': 'pacman/7.0.0'})
+    for attempt in range(1, 4):
+        try:
+            with urllib.request.urlopen(request, timeout=180) as response:
+                return response.read()
+        except (URLError, TimeoutError) as error:
+            if isinstance(error, HTTPError) and error.code not in (403, 408, 429) and not 500 <= error.code < 600:
+                raise
+            if attempt == 3:
+                raise
+            print(f"Retrying SDK download for {package['name']} ({attempt + 1}/3)", flush=True)
+            time.sleep(2 ** attempt)
+
 def install(package):
     cache = ROOT/'.tools/cache'
     cache.mkdir(parents=True, exist_ok=True)
     filename = package['url'].split('/')[-1].split('?')[0]
     path = cache/filename
     if not path.exists():
-        request = urllib.request.Request(package['url'], headers={'User-Agent':'pacman/7.0.0'})
-        path.write_bytes(urllib.request.urlopen(request, timeout=180).read())
+        path.write_bytes(download(package))
     if hashlib.sha256(path.read_bytes()).hexdigest() != package['sha256']:
         raise ValueError('SDK SHA256 mismatch: '+package['name'])
     target = ROOT/'.tools/sdk'
