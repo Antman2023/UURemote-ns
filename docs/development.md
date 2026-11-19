@@ -24,6 +24,30 @@ Switch NRO
 
 `source/main.cpp` 提供 1280×720 手柄界面、中文系统字体、二维码和画面黑边坐标映射。要求 hbmenu 完整应用模式。布局不嵌入 WebView。
 
+## 本机调试
+
+使用本机 C / C++ 编译器运行协议和 WebRTC 回环测试。
+
+```sh
+python scripts/fetch_deps.py
+python scripts/patch_deps.py
+cmake -S . -B build-protocol -G Ninja -DUU_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build build-protocol
+ctest --test-dir build-protocol --output-on-failure
+cmake -S . -B build-rtc-test -G Ninja -DUU_RTC_TESTS=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build build-rtc-test
+ctest --test-dir build-rtc-test --output-on-failure
+```
+
+在 Windows 上可用原生客户端调试登录、信令和媒体。先准备 Python 3.14+、CMake 和 Ninja，从参考 APK 提取 `romfs/signing.key`，然后执行以下命令。省略 `-Run` 可只编译和运行媒体测试。
+
+```powershell
+python scripts/bootstrap_native_sdk.py
+./scripts/build-native.ps1 -Run
+```
+
+原生客户端默认使用微软雅黑，也可以通过 `UU_FONT` 指定字体。按 Enter 确认，方向键选择电脑，Esc 返回，Y 刷新设备，F2 断开，F3 打开远程键盘，F10 退出。
+
 ## 真机检查步骤
 
 1. 以完整应用模式启动，检查系统字体、首页、返回与退出；未登录时不出现假设备。

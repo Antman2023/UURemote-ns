@@ -1,126 +1,82 @@
 # UU Remote NS
 
-**面向 Nintendo Switch 的原生 UU 远程主控端。**
+**在 Nintendo Switch 上使用 UU 远程控制电脑。**
 
-基于 C++17 / libnx 的非官方自制程序，独立连接网易 UU 正式服务与原版 UU远程电脑端，接收电脑画面和声音，并通过 Joy-Con 或触屏发送键鼠操作。运行时无需额外网关。
+连接原版 UU 远程电脑端，接收桌面画面和声音，用 Joy-Con、触屏或屏幕键盘操作。UU Remote NS 是非官方 Switch Homebrew，目前为实验版。
 
-![Platform](https://img.shields.io/badge/platform-Nintendo%20Switch-428580)
-![Status](https://img.shields.io/badge/status-experimental-d99a36)
-[![License](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](LICENSE)
+[**下载最新版**](https://github.com/Antman2023/UURemote-ns/releases/latest) · [安装使用](#安装使用) · [按键操作](#按键操作) · [源码构建](#源码构建)
 
-[**下载最新版**](https://github.com/Antman2023/UURemote-ns/releases/latest) · [安装使用](#安装使用) · [按键操作](#按键操作) · [源码构建](#源码构建) · [开发记录](docs/development.md)
+## 功能
 
-> **当前为实验版，串流仍需 Switch 真机联调。**
-> v0.1.10 修复 H.264 缺片和损坏帧引起的花屏。画面保留上一张正常帧，并在收到新关键帧后恢复。已通过 WebRTC 回环和 Eden 软件解码测试。
-> v0.1.9 增加串流内远程键盘，并将包括减号在内的按键提示改成内置图片。已用 Eden 合成串流验证按键图片以及键盘的打开和关闭，Switch 真机仍待复测。
-
-## 功能与验证状态
-
-当前源码已接入：
-
-- **账号与设备**：大尺寸二维码或短信验证码登录，同步账号下的电脑，选择在线设备连接。
-- **画面与声音**：原生 WebRTC 接收 H.264 / Opus；视频优先尝试 NVDEC，无法使用时回退到软件解码。
-- **Joy-Con 与触屏**：摇杆鼠标、左右键、滚轮、常用按键和触屏拖动。
-- **会话管理**：取消连接、退出账号、连接异常提示，以及失焦或断开时尝试释放输入。
-
-| 验证项目 | 当前结果 |
-| --- | --- |
-| Switch ARM64 交叉编译、NRO 打包与资源段检查 | 通过 |
-| 与参考 Web 实现的签名 / Protobuf 对照、ACK / ICE 和 300 组 WebSocket 数据流测试 | 通过 |
-| 本机原生对端间的 ICE、DTLS、SCTP 二进制输入和 SRTP H.264 接收 | 通过 |
-| 随机数引擎多线程隔离、状态保留与线程退出清理 | 通过 |
-| Horizon SCTP 内部 C / 外部 C++ 地址布局和 ARM64 初始化指令检查 | 通过 |
-| 禁用线程分离后的域名候选解析、音视频回环和连接清理 | 通过 |
-| 候选先于 Offer / Answer 到达时的暂存、应用及五通道音视频回环 | 通过 |
-| 连接关闭后迟到的候选 / SDP 与旧候选清理 | 通过 |
-| RTC 诊断只保留固定事件与数值错误码 | 通过脱敏回归测试 |
-| Windows 开发版扫码登录、正式电脑连接、H.264 画面及三轮连接 | 通过；不等同于 Switch 真机验证 |
-| Switch 真机连接崩溃报告定位 | 已修复随机数状态、线程分离和 SCTP 地址布局兼容问题 |
-| v0.1.5 协商超时 | 已收到 Answer / 候选；修复状态处理延迟，待真机复测 |
-| 短信实收登录和修复后的 Switch 与原版电脑互通 | 待验证 |
-| 真机 NVDEC、声音、输入语义、延迟及长时间稳定性 | 待验证 |
-
-默认请求 **1280 × 720 / 30 FPS / H.264**。Joy-Con 使用键鼠映射，尚未实现 UU 原生虚拟 Xbox 手柄协议。
+- 扫码或短信登录，选择账号下的在线电脑。
+- 通过 WebRTC 接收 H.264 视频与 Opus 音频，默认请求 720p / 30 FPS。视频优先尝试 NVDEC，无法初始化时使用软件解码。
+- 使用摇杆移动鼠标、Joy-Con 操作常用按键，或用触屏拖动和点按屏幕键盘。
 
 ## 安装使用
 
-准备一台能够运行自制程序的 Nintendo Switch，以及已安装原版 UU远程的电脑和手机。Switch 需要联网；手机与电脑使用同一个 UU 账号。
+准备一台能运行 Homebrew 的联网 Switch，并在电脑上登录原版 UU 远程客户端。
 
-1. 下载 [SD 卡安装包](https://github.com/Antman2023/UURemote-ns/releases/download/v0.1.10/UURemote-ns-0.1.10-switch.zip)，解压到 SD 卡根目录；更新时覆盖原 NRO。
-2. 在电脑上打开**原版 UU远程电脑端**，登录账号并保持在线。
-3. 更新后先退出旧程序。在 Switch 上按住 **R** 启动一个游戏，进入完整内存模式的 hbmenu，再打开 **UU Remote NS**。首页应显示 **v0.1.10**；若没有，请检查是否启动了其他目录的旧副本。不支持相册小程序模式。
-4. 按 **A** 获取大尺寸二维码，使用手机官方 UU远程 App 扫码并确认；也可按 **X** 切换短信登录，输入区号、手机号，发送验证码后输入 6 位验证码并选择「登录」。短信界面用 **↑ / ↓** 选择项目，**A** 打开系统数字键盘或确认，重发需等待 60 秒。
-5. 选择列表中的在线电脑，按 **A** 连接；远程桌面中按 **−** 断开。
+1. 在[最新版发布页](https://github.com/Antman2023/UURemote-ns/releases/latest)下载 `UURemote-ns-*-switch.zip`，解压到 SD 卡根目录。更新时先退出旧程序，再覆盖 `switch/UURemote-ns/UURemote-ns.nro`。
+2. 在 Switch 上按住 **R** 启动一个游戏，进入完整内存模式的 hbmenu，打开 **UU Remote NS**。
+3. 按 **A** 显示二维码，用手机 UU 远程 App 扫码并确认。也可按 **X** 切换短信登录，用方向键选择输入项，按 **A** 输入或确认。
+4. 选择在线电脑，按 **A** 连接。串流中按 **−** 断开。
 
-安装后的文件位置：
-
-```text
-SD 卡根目录/
-└── switch/
-    └── UURemote-ns/
-        └── UURemote-ns.nro
-```
-
-也可下载 [单独的 NRO](https://github.com/Antman2023/UURemote-ns/releases/download/v0.1.10/UURemote-ns.nro)，手动放到上述目录。[SHA256SUMS](https://github.com/Antman2023/UURemote-ns/releases/download/v0.1.10/SHA256SUMS) 用于校验 NRO 和安装包。
-
-使用新版 NRO 在 Eden 中测试时，可以在模拟 SD 卡的 `switch/UURemote-ns/` 下创建空文件 `software-video`（无扩展名）并重启客户端。此模式使用软件解码，适用于 NVDEC 模拟出现绿屏、花屏或无画面的情况。移除该文件后恢复自动选择。
-
-账号令牌、手机号和验证码只保存在内存，重启程序后需要重新登录。SD 卡保存随机生成的主控 `client-id` 和连接阶段日志 `connection.log`，包含 ICE / 信令状态、DTLS / SCTP 握手阶段及允许记录的数值错误码；异常终止时还记录异常类型和代码偏移。不记录原始库日志、网络地址、手机号、验证码、令牌、二维码内容、SDP 或数据通道消息。连接时不会强制抢占已有远控会话。
+也可以下载[单独的 NRO](https://github.com/Antman2023/UURemote-ns/releases/latest/download/UURemote-ns.nro)，放入 SD 卡的 `switch/UURemote-ns/`，并用 [SHA256SUMS](https://github.com/Antman2023/UURemote-ns/releases/latest/download/SHA256SUMS) 校验。
 
 ## 按键操作
 
-| 场景 | 按键 | 行为 |
+| 场景 | 按键 | 操作 |
 | --- | --- | --- |
-| 首页 | ↑ / ↓ · A | 选择电脑 · 确认或扫码登录 |
-| 未登录 / 扫码界面 | X | 切换扫码或短信登录 |
-| 短信登录 | ↑ / ↓ · A | 选择输入项或按钮 · 输入或确认 |
-| 已登录首页 | Y · X · + | 刷新设备 · 退出账号 · 退出程序 |
-| 登录或连接中 | B / − | 取消 |
+| 已登录首页 | **Y** / **X** / **+** | 刷新设备 / 退出账号 / 退出程序 |
+| 登录或连接中 | **B** / **−** | 取消 |
 | 远程桌面 | 左摇杆 | 移动鼠标 |
-| 远程桌面 | ZR / ZL | 鼠标左键 / 右键 |
-| 远程桌面 | 触屏 | 移动鼠标，按住拖动；画面黑边不发送输入 |
+| 远程桌面 | **ZR** / **ZL** | 鼠标左键 / 右键 |
+| 远程桌面 | 触屏 | 移动鼠标或按住拖动 |
 | 远程桌面 | 右摇杆上下 | 滚轮 |
-| 远程桌面 | 按下右摇杆 | 打开或关闭远程键盘 |
-| 远程键盘 | 方向键 · A · B | 选键 · 输入 · 关闭，也可触屏点按 |
-| 远程桌面 | A / B / X / Y | Enter / Esc / Space / Tab |
-| 远程桌面 | ↑ / ↓ / ← / → | W / S / A / D |
-| 远程桌面 | L / R | Ctrl / Shift |
-| 远程桌面 | + · − | 显示或隐藏操作说明 · 断开连接 |
+| 远程桌面 | 按下右摇杆 | 打开或关闭屏幕键盘 |
+| 远程桌面 | **A** / **B** / **X** / **Y** | Enter / Esc / 空格 / Tab |
+| 远程桌面 | **↑ ↓ ← →** / **L R** | W S A D / Ctrl Shift |
+| 远程桌面 | **+** / **−** | 显示或隐藏操作提示 / 断开 |
+| 屏幕键盘 | 方向键 / **A** / **B** | 选键 / 输入 / 关闭，也可触屏点按 |
+
+## 故障排查
+
+- **更新后仍显示旧版本**。核对首页版本号与发布页，并确认 hbmenu 打开的是覆盖后的 NRO。
+- **真机或 Eden 花屏、绿屏或无画面**。在 SD 卡的 `switch/UURemote-ns/` 下创建无扩展名的空文件 `software-video`，重启客户端以使用软件解码。移除文件后恢复自动选择。
+- **连接失败或崩溃**。反馈时附上客户端版本和 SD 卡上的 `switch/UURemote-ns/connection.log`。公开提交 Atmosphère 崩溃报告前，请删除可能包含凭据的内容。可以在 [GitHub Issues](https://github.com/Antman2023/UURemote-ns/issues) 反馈。
+
+账号令牌保存在内存中，重启程序后需要重新登录。SD 卡保存客户端 ID 和连接阶段日志。
 
 ## 当前限制
 
-- 未实现应用列表与启动界面、剪贴板或文件传输。
-- 网络实现支持 IPv4 与 UDP TURN；不支持 TURN TCP / TLS，也没有自动重连。
-- 未实现 H.265、码率 / 分辨率设置和零拷贝显示；NVDEC 路径仍会将硬件帧传回 CPU，转换为 RGBA 后上传 SDL 纹理。
-- 音频尚未实现完整抖动缓冲和音画时钟同步，性能及稳定性需要真机测试。
-
-真机联调可按[开发记录中的检查步骤](docs/development.md#真机检查步骤)进行。连接异常时可附上 `switch/UURemote-ns/connection.log`；若程序崩溃，再提供对应 Atmosphère 崩溃报告。原始崩溃报告可能含内存中的凭据，适合私下排查，公开反馈请先脱敏。
+- Joy-Con 映射为键鼠输入。虚拟手柄、剪贴板和文件传输尚未实现。
+- 网络支持 IPv4 和 UDP TURN。TCP / TLS TURN 和自动重连尚未实现。
+- 视频使用 H.264，当前没有分辨率或码率设置，也缺少完整的音画同步。
 
 ## 源码构建
 
-### 获取源码
+需要 CMake 3.21+、Ninja、Python 3.12+ 和 devkitPro Switch 工具链。打包 NRO 还需要从自行提供的 UU TV 3.5.0 APK 中提取请求签名材料。
 
 ```sh
 git clone https://github.com/Antman2023/UURemote-ns.git
 cd UURemote-ns
 ```
 
-需要 **CMake 3.21+、Ninja、Python 3.12+** 和 devkitPro Switch 工具链。构建时还需自行提供 **UU TV 3.5.0 APK**，用于提取该版本的请求签名材料；仓库不包含 APK 或签名常量。
-
 ### Windows
 
-可用 Python **3.14+** 将锁定版本的工具链下载到项目内的 `.tools/`，无需安装到系统目录：
+使用 Python 3.14+ 安装项目锁定的 SDK，并生成 NRO 和 SD 卡安装包。
 
 ```powershell
 python scripts/bootstrap_sdk.py
 ./scripts/build.ps1 -Apk 'C:\path\to\UURemote-TV-3.5.0.apk'
 ```
 
-已有 devkitPro 时，设置 `$env:DEVKITPRO` 后直接运行第二条命令即可，无需执行工具链下载脚本。`cmake`、`ninja` 和 `python` 需位于 PATH；构建脚本也会识别项目内已有的 `.tools/ninja/ninja.exe`。
+已有 devkitPro 时，设置 `$env:DEVKITPRO` 后直接运行构建命令。
 
-### Linux / macOS
+<details>
+<summary>Linux / macOS</summary>
 
-在已有 devkitPro 环境中安装 `switch-dev`、`switch-sdl2`、`switch-sdl2_ttf`、`switch-ffmpeg` 和 `switch-libopus`，其余 portlibs 由包依赖带入。然后执行：
+使用 devkitPro 安装 `switch-dev`、`switch-sdl2`、`switch-sdl2_ttf`、`switch-ffmpeg` 和 `switch-libopus`。
 
 ```sh
 export DEVKITPRO=/opt/devkitpro
@@ -132,83 +88,18 @@ cmake --build build-nx -j6
 python3 scripts/package.py
 ```
 
-已验证的交叉编译环境为 Windows、devkitA64 r30 / GCC 16.1.0、libnx 4.12.0；Linux / macOS 构建步骤尚未在本项目中实测。
+</details>
 
-构建输出：
-
-| 路径 | 内容 |
-| --- | --- |
-| `build-nx/UURemote-ns.nro` | Switch 可执行文件 |
-| `dist/UURemote-ns-0.1.10-switch.zip` | 按 SD 卡目录排好的 NRO 和许可证 |
-| `dist/SHA256SUMS` | NRO 与安装包校验值 |
-
-第三方源码版本与 SHA256 记录在 [sources.lock.json](scripts/sources.lock.json)，Windows 工具链包记录在 [sdk-windows.lock.json](scripts/sdk-windows.lock.json)。依赖下载到 `external/`，Horizon 平台补丁由 [patch_deps.py](scripts/patch_deps.py) 应用。
+NRO 位于 `build-nx/UURemote-ns.nro`，安装包和 `SHA256SUMS` 位于 `dist/`。依赖版本与校验值见 [源码锁定清单](scripts/sources.lock.json) 和 [Windows SDK 锁定清单](scripts/sdk-windows.lock.json)。
 
 ### GitHub Actions
 
-面向 `main` 的 Pull Request 会编译 ARM64 ELF，供合并前检查。在 `main` 手动运行 **Build Switch** 可以生成 NRO、SD 卡安装包和 `SHA256SUMS`。构建完成后，在对应运行的 **Artifacts** 中下载。
+推送指向 `main` 上提交的 `vX.Y.Z` 标签会自动构建并发布为 **Latest**。标签须与 `CMakeLists.txt` 中的项目版本一致。面向 `main` 的 PR 会编译 ARM64 ELF。在 `main` 手动运行 **Build Switch** 并填写 `release_tag` 可以补发已有标签。
 
-推送 `vX.Y.Z` 标签会自动构建安装包，并在校验产物后创建 GitHub Release，默认标记为 **Latest**。标签必须指向 `main` 上的提交，版本须与 `CMakeLists.txt` 中的 `project` 版本一致。发布页会附带 NRO、SD 卡安装包和 `SHA256SUMS`，并自动生成变更说明。
+在自己的仓库打包时，将从 APK 提取的 `romfs/signing.key` 编码为 Base64，存到仓库的 Actions Secret `UU_SIGNING_KEY_BASE64`。生成的 NRO 会嵌入该签名材料。
 
-补发已有标签时，在 `main` 上手动运行 **Build Switch**，将 `release_tag` 设为要发布的标签。Actions 使用当前 SDK 安装和打包脚本构建该标签的源码。
-
-首次配置时，从自己提供的 APK 提取 `romfs/signing.key`，然后在仓库根目录使用已登录的 GitHub CLI 创建 `UU_SIGNING_KEY_BASE64` Actions Secret。
-
-```powershell
-python scripts/extract_key.py 'C:\path\to\UURemote-TV-3.5.0.apk'
-[Convert]::ToBase64String([IO.File]::ReadAllBytes((Resolve-Path 'romfs/signing.key').Path)) |
-    gh secret set UU_SIGNING_KEY_BASE64
-```
-
-Secret 供手动打包和版本标签构建还原文件。生成的 NRO 包含签名材料，可以从 NRO 中提取。公开仓库的 Actions 产物可由登录 GitHub 且拥有仓库读取权限的用户下载。
-
-### 本机测试
-
-以下测试使用**本机 C / C++ 编译器**，不需要 Switch、APK 或 UU 账号。首次运行前，先在仓库根目录执行 `python scripts/fetch_deps.py` 下载源码依赖。
-
-```sh
-# 协议回归
-cmake -S . -B build-protocol -G Ninja -DUU_CORE_ONLY=ON -DCMAKE_BUILD_TYPE=Release
-cmake --build build-protocol
-ctest --test-dir build-protocol --output-on-failure
-
-# 原生 WebRTC 回环
-cmake -S . -B build-rtc-test -G Ninja -DUU_RTC_TESTS=ON -DCMAKE_BUILD_TYPE=Release
-cmake --build build-rtc-test
-ctest --test-dir build-rtc-test --output-on-failure
-```
-
-回环测试仅使用本机两个原生对端，不连接正式 UU 房间，不能替代 Switch 与原版电脑端的兼容性验证。
-
-### Windows 完整客户端调试（开发版）
-
-源码支持在 Windows 上直接运行同一套客户端，便于调试实际登录、信令、媒体和连接清理。工具链与依赖安装在 `.tools/native-sdk`，与 Switch SDK 分开；需要 Python 3.14+、CMake 和 Ninja。
-
-```powershell
-python scripts/bootstrap_native_sdk.py
-./scripts/build-native.ps1 -Run
-```
-
-构建脚本会运行真实 H.264 解码和错误清理测试。启动前需已有从参考 APK 提取的 `romfs/signing.key`；运行时默认使用 Windows 微软雅黑，也可通过 `UU_FONT` 指定字体文件。
-
-按 Enter 确认、方向键选择电脑、Esc 返回、Y 刷新、F2 断开、F3 打开远程键盘、F10 退出。当前本机登录使用二维码，短信数字输入界面尚未实现。Windows 版已完成扫码登录、与原版电脑端建立 ICE / DTLS / SCTP、显示远程画面和两次断开重连；真实声音播放、完整输入语义和 Switch 真机仍需继续验证。
-
-v0.1.7 包含事件恢复、媒体清理、计时和音频错误提示修复。所有日志和账号状态均留在本地，测试素材只使用合成画面。
-
-## 技术结构
-
-```mermaid
-flowchart LR
-    Switch[Switch 原生客户端] -->|登录、设备与信令| UU[网易 UU 正式服务]
-    Switch <-->|WebRTC 音视频与键鼠输入| PC[原版 UU远程电脑端]
-```
-
-客户端使用 libcurl 处理 HTTPS / TLS WebSocket，Switch 版使用应用内的 Mbed TLS 和 Mozilla CA 根证书包。libdatachannel 及其依赖处理 WebRTC，FFmpeg / Opus 负责解码，SDL2 负责显示与音频输出。系统共享字体缺字时使用内置的简体中文备用字体。协议移植参考 `UURemote-web`，保留其已验证的请求签名、连接参数及信令封装。
-
-实现细节、源码位置与真机检查步骤见 [开发记录](docs/development.md)。
+技术结构、调试命令和真机排查步骤见[开发记录](docs/development.md)。
 
 ## 许可证与声明
 
-项目代码采用 [GPL-3.0-or-later](LICENSE)，依赖的授权信息见 [THIRD_PARTY.md](THIRD_PARTY.md)。
-
-签名材料在本机构建时从用户提供的 APK 提取，写入被 Git 忽略的 `romfs/signing.key`，并嵌入生成的 NRO；它不是能够在客户端保密的密钥。APK、UU 品牌和协议归原权利人所有。本项目非网易官方客户端，与网易无隶属或背书关系。
+项目采用 [GPL-3.0-or-later](LICENSE)，第三方授权见 [THIRD_PARTY.md](THIRD_PARTY.md)。UU 品牌与相关协议归原权利人所有。
