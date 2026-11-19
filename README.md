@@ -141,6 +141,22 @@ python3 scripts/package.py
 
 第三方源码版本与 SHA256 记录在 [sources.lock.json](scripts/sources.lock.json)，Windows 工具链包记录在 [sdk-windows.lock.json](scripts/sdk-windows.lock.json)。依赖下载到 `external/`，Horizon 平台补丁由 [patch_deps.py](scripts/patch_deps.py) 应用。
 
+### GitHub Actions
+
+推送到 `main` 或在 `main` 手动运行 **Build Switch** 时，Actions 使用锁定的 Windows 工具链生成 NRO、SD 卡安装包和 `SHA256SUMS`。构建完成后，在对应运行的 **Artifacts** 中下载。提交到 `main` 的 Pull Request 会编译 ARM64 ELF，供合并前检查。
+
+推送 `vX.Y.Z` 标签会触发同一构建，并在校验产物后创建 GitHub 预发布。标签必须指向 `main` 上的提交，版本须与 `CMakeLists.txt` 中的 `project` 版本一致。发布页会附带 NRO、SD 卡安装包和 `SHA256SUMS`，并自动生成变更说明。
+
+首次配置时，从自己提供的 APK 提取 `romfs/signing.key`，然后在仓库根目录使用已登录的 GitHub CLI 创建 `UU_SIGNING_KEY_BASE64` Actions Secret。
+
+```powershell
+python scripts/extract_key.py 'C:\path\to\UURemote-TV-3.5.0.apk'
+[Convert]::ToBase64String([IO.File]::ReadAllBytes((Resolve-Path 'romfs/signing.key').Path)) |
+    gh secret set UU_SIGNING_KEY_BASE64
+```
+
+Secret 供 `main` 和通过校验的版本标签构建还原文件。生成的 NRO 包含签名材料，可以从 NRO 中提取。公开仓库的 Actions 产物可由登录 GitHub 且拥有仓库读取权限的用户下载。
+
 ### 本机测试
 
 以下测试使用**本机 C / C++ 编译器**，不需要 Switch、APK 或 UU 账号。首次运行前，先在仓库根目录执行 `python scripts/fetch_deps.py` 下载源码依赖。

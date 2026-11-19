@@ -1,4 +1,4 @@
-param([string]$Apk = $env:UU_REFERENCE_APK, [int]$Jobs = 6)
+param([string]$Apk = $env:UU_REFERENCE_APK, [int]$Jobs = 6, [switch]$CompileOnly)
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 Push-Location $projectRoot
@@ -14,11 +14,13 @@ try {
     if ($LASTEXITCODE) { throw 'Dependency download failed' }
     python scripts/patch_deps.py
     if ($LASTEXITCODE) { throw 'Dependency patch failed' }
-    if ($Apk) {
-        python scripts/extract_key.py $Apk
-        if ($LASTEXITCODE) { throw 'APK extraction failed' }
-    } elseif (-not (Test-Path -LiteralPath 'romfs/signing.key')) {
-        throw 'Provide -Apk with your UU TV 3.5.0 APK path.'
+    if (-not $CompileOnly) {
+        if ($Apk) {
+            python scripts/extract_key.py $Apk
+            if ($LASTEXITCODE) { throw 'APK extraction failed' }
+        } elseif (-not (Test-Path -LiteralPath 'romfs/signing.key')) {
+            throw 'Provide -Apk with your UU TV 3.5.0 APK path.'
+        }
     }
     $cmakeExe = (Get-Command cmake -ErrorAction Stop).Source
     $configure = @('-S', '.', '-B', 'build-nx', '-DCMAKE_TOOLCHAIN_FILE=cmake/switch.cmake', '-DCMAKE_BUILD_TYPE=Release')
@@ -32,8 +34,12 @@ try {
     }
     & $cmakeExe @configure
     if ($LASTEXITCODE) { throw 'CMake configuration failed' }
-    & $cmakeExe --build build-nx -j $Jobs
+    $build = @('--build', 'build-nx', '-j', $Jobs)
+    if ($CompileOnly) { $build += @('--target', 'UURemote-ns') }
+    & $cmakeExe @build
     if ($LASTEXITCODE) { throw 'Switch build failed' }
-    python scripts/package.py
-    if ($LASTEXITCODE) { throw 'Packaging failed' }
+    if (-not $CompileOnly) {
+        python scripts/package.py
+        if ($LASTEXITCODE) { throw 'Packaging failed' }
+    }
 } finally { Pop-Location }
