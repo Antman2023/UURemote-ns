@@ -136,7 +136,7 @@ python3 scripts/package.py
 | 路径 | 内容 |
 | --- | --- |
 | `build-nx/UURemote-ns.nro` | Switch 可执行文件 |
-| `dist/UURemote-ns-0.1.8-switch.zip` | SD 卡安装包、说明和许可证 |
+| `dist/UURemote-ns-0.1.8-switch.zip` | 按 SD 卡目录排好的 NRO 和许可证 |
 | `dist/SHA256SUMS` | NRO 与安装包校验值 |
 
 第三方源码版本与 SHA256 记录在 [sources.lock.json](scripts/sources.lock.json)，Windows 工具链包记录在 [sdk-windows.lock.json](scripts/sdk-windows.lock.json)。依赖下载到 `external/`，Horizon 平台补丁由 [patch_deps.py](scripts/patch_deps.py) 应用。
@@ -147,7 +147,7 @@ python3 scripts/package.py
 
 推送 `vX.Y.Z` 标签会触发同一构建，并在校验产物后创建 GitHub 预发布。与 `main` 一起推送并指向同一提交的版本标签也会发布。标签必须指向 `main` 上的提交，版本须与 `CMakeLists.txt` 中的 `project` 版本一致。发布页会附带 NRO、SD 卡安装包和 `SHA256SUMS`，并自动生成变更说明。
 
-补发已有标签时，在 `main` 上手动运行 **Build Switch**，将 `release_tag` 设为要发布的标签。Actions 会检出该标签的提交并打包。
+补发已有标签时，在 `main` 上手动运行 **Build Switch**，将 `release_tag` 设为要发布的标签。Actions 编译该标签的源码，并按当前工作流的打包规则生成 ZIP。
 
 首次配置时，从自己提供的 APK 提取 `romfs/signing.key`，然后在仓库根目录使用已登录的 GitHub CLI 创建 `UU_SIGNING_KEY_BASE64` Actions Secret。
 

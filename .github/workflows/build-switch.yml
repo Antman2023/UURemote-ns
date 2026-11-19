@@ -65,6 +65,9 @@ jobs:
               if ($push) { throw 'The tag no longer points to the triggering commit.' }
               git checkout --detach $target
               if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+              # Dispatch uses the current packaging rules and the tagged application source.
+              git restore --source=$commit --worktree -- scripts/package.py
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
               $commit = $target
             }
           }
