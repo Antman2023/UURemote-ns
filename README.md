@@ -8,10 +8,10 @@
 ![Status](https://img.shields.io/badge/status-experimental-d99a36)
 [![License](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](LICENSE)
 
-[**下载 v0.1.7 实验版**](https://github.com/Antman2023/UURemote-ns/releases/tag/v0.1.7) · [安装使用](#安装使用) · [按键操作](#按键操作) · [源码构建](#源码构建) · [开发记录](docs/development.md)
+[**下载 v0.1.8 实验版**](https://github.com/Antman2023/UURemote-ns/releases/tag/v0.1.8) · [安装使用](#安装使用) · [按键操作](#按键操作) · [源码构建](#源码构建) · [开发记录](docs/development.md)
 
 > **当前为实验版，串流仍需 Switch 真机联调。**
-> v0.1.7 修复异常时命令丢失、媒体资源清理、重连旧帧和超时计时，并增加音频设备及播放错误提示。Windows 调试版已显示正式电脑端画面并完成两次重连；Switch 真机互通仍待复测。保留大二维码、短信登录及分层脱敏诊断。
+> v0.1.8 修复中文缺字、二维码登录和 Eden 中的 WebRTC 连接，并为 Eden 提供 H.264 软件解码选项。已在 Eden 验证扫码连接、音频播放、WebRTC 回环及合成画面显示。Switch 真机串流仍待复测。
 
 ## 功能与验证状态
 
@@ -45,9 +45,9 @@
 
 准备一台能够运行自制程序的 Nintendo Switch，以及已安装原版 UU远程的电脑和手机。Switch 需要联网；手机与电脑使用同一个 UU 账号。
 
-1. 下载 [SD 卡安装包](https://github.com/Antman2023/UURemote-ns/releases/download/v0.1.7/UURemote-ns-0.1.7-switch.zip)，解压到 SD 卡根目录；更新时覆盖原 NRO。
+1. 下载 [SD 卡安装包](https://github.com/Antman2023/UURemote-ns/releases/download/v0.1.8/UURemote-ns-0.1.8-switch.zip)，解压到 SD 卡根目录；更新时覆盖原 NRO。
 2. 在电脑上打开**原版 UU远程电脑端**，登录账号并保持在线。
-3. 更新后先退出旧程序。在 Switch 上按住 **R** 启动一个游戏，进入完整内存模式的 hbmenu，再打开 **UU Remote NS**。首页应显示 **v0.1.7**；若没有，请检查是否启动了其他目录的旧副本。不支持相册小程序模式。
+3. 更新后先退出旧程序。在 Switch 上按住 **R** 启动一个游戏，进入完整内存模式的 hbmenu，再打开 **UU Remote NS**。首页应显示 **v0.1.8**；若没有，请检查是否启动了其他目录的旧副本。不支持相册小程序模式。
 4. 按 **A** 获取大尺寸二维码，使用手机官方 UU远程 App 扫码并确认；也可按 **X** 切换短信登录，输入区号、手机号，发送验证码后输入 6 位验证码并选择「登录」。短信界面用 **↑ / ↓** 选择项目，**A** 打开系统数字键盘或确认，重发需等待 60 秒。
 5. 选择列表中的在线电脑，按 **A** 连接；远程桌面中按 **−** 断开。
 
@@ -60,7 +60,7 @@ SD 卡根目录/
         └── UURemote-ns.nro
 ```
 
-也可下载 [单独的 NRO](https://github.com/Antman2023/UURemote-ns/releases/download/v0.1.7/UURemote-ns.nro)，手动放到上述目录。[SHA256SUMS](https://github.com/Antman2023/UURemote-ns/releases/download/v0.1.7/SHA256SUMS) 用于校验 NRO 和安装包。
+也可下载 [单独的 NRO](https://github.com/Antman2023/UURemote-ns/releases/download/v0.1.8/UURemote-ns.nro)，手动放到上述目录。[SHA256SUMS](https://github.com/Antman2023/UURemote-ns/releases/download/v0.1.8/SHA256SUMS) 用于校验 NRO 和安装包。
 
 使用新版 NRO 在 Eden 中测试时，可以在模拟 SD 卡的 `switch/UURemote-ns/` 下创建空文件 `software-video`（无扩展名）并重启客户端。此模式使用软件解码，适用于 NVDEC 模拟出现绿屏、花屏或无画面的情况。移除该文件后恢复自动选择。
 
@@ -136,7 +136,7 @@ python3 scripts/package.py
 | 路径 | 内容 |
 | --- | --- |
 | `build-nx/UURemote-ns.nro` | Switch 可执行文件 |
-| `dist/UURemote-ns-0.1.7-switch.zip` | SD 卡安装包、说明和许可证 |
+| `dist/UURemote-ns-0.1.8-switch.zip` | SD 卡安装包、说明和许可证 |
 | `dist/SHA256SUMS` | NRO 与安装包校验值 |
 
 第三方源码版本与 SHA256 记录在 [sources.lock.json](scripts/sources.lock.json)，Windows 工具链包记录在 [sdk-windows.lock.json](scripts/sdk-windows.lock.json)。依赖下载到 `external/`，Horizon 平台补丁由 [patch_deps.py](scripts/patch_deps.py) 应用。
