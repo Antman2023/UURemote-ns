@@ -22,8 +22,9 @@ class Media {
     enum class VideoDecoder { Automatic, Software };
     explicit Media(VideoDecoder videoDecoder = VideoDecoder::Automatic);
     ~Media();
-    // Returns true when the receiver should request a fresh keyframe.
+    // An empty frame reports RTP loss. Returns true when a fresh keyframe is due.
     bool video(const uint8_t *data, size_t size, uint64_t generation);
+    bool takeVideoKeyframeRequest();
     void audio(const uint8_t *data, size_t size, uint64_t generation);
     uint64_t generation() const;
     std::shared_ptr<const Picture> picture(uint64_t after);

@@ -11,6 +11,7 @@ extern "C" {
 #ifdef UU_MEDIA_FAULT_TEST
 std::atomic<int> liveFrames{0}, liveContexts{0}, livePackets{0};
 std::atomic<bool> failFrame{false}, failScaler{false}, failOpus{false};
+std::atomic<bool> reportDecodeError{false};
 std::atomic<bool> failAudioOpen{false}, failAudioQueue{false};
 std::atomic<unsigned> queuedBytes{0};
 std::mutex scalerMutex;
@@ -52,6 +53,7 @@ extern "C" AVFrame *__real_av_frame_alloc();
 extern "C" void __real_av_frame_free(AVFrame **);
 extern "C" AVCodecContext *__real_avcodec_alloc_context3(const AVCodec *);
 extern "C" void __real_avcodec_free_context(AVCodecContext **);
+extern "C" int __real_avcodec_receive_frame(AVCodecContext *, AVFrame *);
 extern "C" AVPacket *__real_av_packet_alloc();
 extern "C" void __real_av_packet_free(AVPacket **);
 extern "C" SwsContext *__real_sws_getCachedContext(SwsContext *, int, int, AVPixelFormat, int, int,
@@ -81,6 +83,14 @@ extern "C" void __wrap_avcodec_free_context(AVCodecContext **value) {
     if (*value)
         --liveContexts;
     __real_avcodec_free_context(value);
+}
+extern "C" int __wrap_avcodec_receive_frame(AVCodecContext *context, AVFrame *frame) {
+    const int result = __real_avcodec_receive_frame(context, frame);
+    if (result == 0 && reportDecodeError.exchange(false)) {
+        frame->flags &= ~AV_FRAME_FLAG_CORRUPT;
+        frame->decode_error_flags = FF_DECODE_ERROR_DECODE_SLICES;
+    }
+    return result;
 }
 extern "C" AVPacket *__wrap_av_packet_alloc() {
     auto *value = __real_av_packet_alloc();
@@ -177,6 +187,35 @@ int main(int argc, char **argv) {
 #endif
         }
 #ifdef UU_MEDIA_FAULT_TEST
+        {
+            uu::Media media;
+            const auto generation = media.generation();
+            media.video(frame.data(), frame.size(), generation);
+            waitFor([&] { return media.picture(0) != nullptr; });
+            const auto good = media.picture(0);
+            reportDecodeError = true;
+            media.video(frame.data(), frame.size(), generation);
+            waitFor([&] { return media.status().find("等待关键帧") != std::string::npos; });
+            check(media.picture(0) == good, "Decoder error replaced the last good picture");
+            check(media.takeVideoKeyframeRequest(), "Decoder error did not request a keyframe");
+            check(!media.takeVideoKeyframeRequest(), "Decoder keyframe request was not rate limited");
+            check(!media.video(nullptr, 0, generation), "RTP loss bypassed the decoder request limit");
+            media.video(frame.data(), frame.size(), generation);
+            waitFor([&] { return media.picture(good->serial) != nullptr; });
+            check(media.status().empty(), "Clean keyframe did not end recovery");
+        }
+        {
+            uu::Media media;
+            const auto generation = media.generation();
+            media.video(frame.data(), frame.size(), generation);
+            waitFor([&] { return media.picture(0) != nullptr; });
+            const auto good = media.picture(0);
+            check(!media.video(nullptr, 0, generation - 1), "Stale RTP loss requested a keyframe");
+            check(media.video(nullptr, 0, generation), "RTP loss did not request a keyframe");
+            check(media.picture(0) == good, "RTP loss cleared the last good picture");
+            media.video(frame.data(), frame.size(), generation);
+            waitFor([&] { return media.picture(good->serial) != nullptr; });
+        }
         {
             uu::Media media;
             const auto generation = media.generation();

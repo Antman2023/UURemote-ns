@@ -9,6 +9,14 @@
 namespace uu {
 namespace {
 constexpr char controlChannelLabel[] = "CONTROL_DATA_CHANNEL";
+void requestVideoKeyframe(rtc::Track &track) {
+    try {
+        if (track.requestKeyframe())
+            diagnostic("video-keyframe-request");
+    } catch (const std::exception &) {
+        diagnostic("video-keyframe-request-failed");
+    }
+}
 } // namespace
 
 Client::Client(std::string key, std::string client, std::shared_ptr<Media> media) : media_(std::move(media)) {
@@ -68,6 +76,8 @@ void Client::run() {
             drainEvents();
             if (stop_)
                 break;
+            if (video_ && video_->isOpen() && media_->takeVideoKeyframeRequest())
+                requestVideoKeyframe(*video_);
             if (socket_) {
                 pumpSignaling(
                     [this](WsMessage &m) {
@@ -488,14 +498,8 @@ void Client::beginPeer(const Json &result) {
         auto m = media.lock();
         if (!m || !m->video(reinterpret_cast<const uint8_t *>(data.data()), data.size(), mediaGeneration))
             return;
-        if (auto track = video.lock(); track && track->isOpen()) {
-            try {
-                if (track->requestKeyframe())
-                    diagnostic("video-keyframe-request");
-            } catch (const std::exception &) {
-                diagnostic("video-keyframe-request-failed");
-            }
-        }
+        if (auto track = video.lock(); track && track->isOpen())
+            requestVideoKeyframe(*track);
     });
     rtc::Description::Audio a("1", rtc::Description::Direction::RecvOnly);
     diagnostic("rtc-audio");

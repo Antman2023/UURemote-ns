@@ -22,6 +22,7 @@ int loopback() {
     std::mutex mutex;
     std::condition_variable cv;
     bool input = false, picture = false, audio = false, keyframeRequested = false;
+    bool videoLoss = false, videoRecovered = false;
     bool controlOpened = false, controlClosed = false;
     int result = 1;
     {
@@ -84,10 +85,12 @@ int loopback() {
         receiver->onFrame([&, weakReceiver](rtc::binary data, rtc::FrameInfo) {
             const bool valid = data == rtc::binary{std::byte{0},    std::byte{0},    std::byte{0},   std::byte{1},
                                                    std::byte{0x65}, std::byte{0x42}, std::byte{0x17}};
-            if (auto track = weakReceiver.lock(); valid && track)
+            if (auto track = weakReceiver.lock(); data.empty() && track)
                 track->requestKeyframe();
             std::lock_guard lock(mutex);
-            picture = valid;
+            videoRecovered |= videoLoss && valid;
+            videoLoss |= data.empty();
+            picture |= valid;
             cv.notify_all();
         });
         rtc::Description::Video send("0", rtc::Description::Direction::SendOnly);
@@ -159,11 +162,20 @@ int loopback() {
             control->send(reinterpret_cast<const std::byte *>(message.data()), message.size());
             const uint8_t packet[] = {0x80, 0xe0, 0, 1, 0, 0, 0, 1, 0, 0, 4, 0xd2, 0x65, 0x42, 0x17};
             sender->send(reinterpret_cast<const std::byte *>(packet), sizeof(packet));
+            const uint8_t brokenStart[] = {0x80, 0x60, 0, 2, 0, 0, 0, 2, 0, 0, 4, 0xd2, 0x7c, 0x85, 0x42};
+            const uint8_t brokenEnd[] = {0x80, 0xe0, 0, 4, 0, 0, 0, 2, 0, 0, 4, 0xd2, 0x7c, 0x45, 0x17};
+            const uint8_t recoveredStart[] = {0x80, 0x60, 0, 5, 0, 0, 0, 3, 0, 0, 4, 0xd2, 0x7c, 0x85, 0x42};
+            const uint8_t recoveredEnd[] = {0x80, 0xe0, 0, 6, 0, 0, 0, 3, 0, 0, 4, 0xd2, 0x7c, 0x45, 0x17};
+            sender->send(reinterpret_cast<const std::byte *>(brokenStart), sizeof(brokenStart));
+            sender->send(reinterpret_cast<const std::byte *>(brokenEnd), sizeof(brokenEnd));
+            sender->send(reinterpret_cast<const std::byte *>(recoveredStart), sizeof(recoveredStart));
+            sender->send(reinterpret_cast<const std::byte *>(recoveredEnd), sizeof(recoveredEnd));
             const uint8_t opusPacket[] = {0x80, 0xef, 0, 1, 0, 0, 0, 1, 0, 0, 4, 0xd3, 0xf8, 0xff, 0xfe};
             audioSender->send(reinterpret_cast<const std::byte *>(opusPacket), sizeof(opusPacket));
             std::unique_lock lock(mutex);
             const auto complete = [&] {
-                return input && picture && audio && keyframeRequested && controlOpened && remoteControl;
+                return input && picture && videoLoss && videoRecovered && audio && keyframeRequested &&
+                       controlOpened && remoteControl;
             };
             if (cv.wait_until(lock, until, complete)) {
                 const auto channel = remoteControl;

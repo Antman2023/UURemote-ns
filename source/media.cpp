@@ -92,6 +92,29 @@ struct Media::Impl {
         return avcodec_default_get_format(context, formats);
     }
 #endif
+    void discardVideo() {
+        queue.clear();
+        clear = true;
+        recovering = true;
+    }
+    bool takeKeyframeRequest() {
+        if (!recovering || decoderFailed.load())
+            return false;
+        const auto now = std::chrono::steady_clock::now();
+        if (now < nextKeyframeRequest)
+            return false;
+        nextKeyframeRequest = now + std::chrono::seconds(1);
+        return true;
+    }
+    void decoderLoss(uint64_t currentGeneration) {
+        {
+            std::lock_guard lock(mutex);
+            if (clear || recovering || currentGeneration != generation.load())
+                return;
+            discardVideo();
+        }
+        diagnostic("video-decoder-bad-frame");
+    }
     void decode(VideoDecoder videoDecoder) {
         const auto *codec = avcodec_find_decoder(AV_CODEC_ID_H264);
         DecoderResources resources;
@@ -148,13 +171,20 @@ struct Media::Impl {
             if (data.empty())
                 continue;
             av_packet_unref(packet);
-            if (av_new_packet(packet, int(data.size())) < 0)
+            if (av_new_packet(packet, int(data.size())) < 0) {
+                decoderLoss(currentGeneration);
                 continue;
+            }
             std::copy(data.begin(), data.end(), packet->data);
             auto drain = [&] {
-                while (avcodec_receive_frame(ctx, frame) == 0) {
+                int result;
+                while ((result = avcodec_receive_frame(ctx, frame)) == 0) {
                     const bool keyframe = (frame->flags & AV_FRAME_FLAG_KEY) != 0;
-                    if ((frame->flags & AV_FRAME_FLAG_CORRUPT) || (needsKeyframe && !keyframe)) {
+                    if ((frame->flags & AV_FRAME_FLAG_CORRUPT) || frame->decode_error_flags > 0) {
+                        av_frame_unref(frame);
+                        return false;
+                    }
+                    if (needsKeyframe && !keyframe) {
                         av_frame_unref(frame);
                         continue;
                     }
@@ -186,7 +216,7 @@ struct Media::Impl {
                         int stride[4] = {width * 4};
                         if (sws_scale(sws, source->data, source->linesize, 0, height, dst, stride) == height) {
                             std::lock_guard lock(mutex);
-                            // An overflow may invalidate an in-flight frame while it is being converted.
+                            // A discard may invalidate an in-flight frame during conversion.
                             if (!clear && currentGeneration == generation.load()) {
                                 picture->serial = ++serial;
                                 latest = std::move(picture);
@@ -197,43 +227,42 @@ struct Media::Impl {
                     }
                     av_frame_unref(frame);
                 }
+                return result == AVERROR(EAGAIN);
             };
             int result = avcodec_send_packet(ctx, packet);
-            if (result == AVERROR(EAGAIN)) {
-                drain();
+            if (result == AVERROR(EAGAIN) && drain())
                 result = avcodec_send_packet(ctx, packet);
-            }
-            if (result >= 0)
-                drain();
+            if (result < 0 || !drain())
+                decoderLoss(currentGeneration);
         }
     }
 };
 Media::Media(VideoDecoder videoDecoder) : impl_(std::make_unique<Impl>(videoDecoder)) {}
 Media::~Media() = default;
 bool Media::video(const uint8_t *data, size_t size, uint64_t generation) {
-    if (!size || size > 2 * 1024 * 1024 || impl_->decoderFailed.load())
+    if (impl_->decoderFailed.load())
         return false;
-    bool requestKeyframe = false;
+    const bool dropped = size == 0 || size > 2 * 1024 * 1024;
+    bool requestKeyframe, startedRecovery;
     {
         std::lock_guard lock(impl_->mutex);
         if (generation != impl_->generation.load())
             return false;
-        if (impl_->queue.size() >= 8) {
-            impl_->queue.clear();
-            impl_->clear = true;
-            impl_->recovering = true;
-        }
-        impl_->queue.emplace_back(data, data + size);
-        if (impl_->recovering) {
-            const auto now = std::chrono::steady_clock::now();
-            if (now >= impl_->nextKeyframeRequest) {
-                impl_->nextKeyframeRequest = now + std::chrono::seconds(1);
-                requestKeyframe = true;
-            }
-        }
+        startedRecovery = dropped && !impl_->recovering;
+        if (dropped || impl_->queue.size() >= 8)
+            impl_->discardVideo();
+        if (!dropped)
+            impl_->queue.emplace_back(data, data + size);
+        requestKeyframe = impl_->takeKeyframeRequest();
     }
     impl_->cv.notify_one();
+    if (startedRecovery)
+        diagnostic("video-rtp-frame-dropped");
     return requestKeyframe;
+}
+bool Media::takeVideoKeyframeRequest() {
+    std::lock_guard lock(impl_->mutex);
+    return impl_->takeKeyframeRequest();
 }
 void Media::audio(const uint8_t *data, size_t size, uint64_t generation) {
     if (!size || size > 4096)
@@ -283,6 +312,8 @@ std::string Media::status() {
     auto status = impl_->error;
     if (impl_->decoderFailed.load())
         status = "视频解码已停止，请退出程序后重试";
+    else if (impl_->recovering)
+        status = "正在恢复视频，等待关键帧";
     const auto audio = impl_->audioStatus.load();
     if (audio != Impl::AudioStatus::Ready) {
         if (!status.empty())

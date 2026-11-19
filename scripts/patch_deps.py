@@ -49,6 +49,64 @@ replace(Path('deps/libjuice/src/udp.c'), '#else // NO_IFADDRS defined\n', '''#el
     return 0;
 #else // NO_IFADDRS defined
 ''')
+# Reject incomplete H.264 access units. An empty frame with a timestamp tells
+# the consumer to reset its references and request a keyframe.
+h264 = Path('src/h264rtpdepacketizer.cpp')
+replace(h264, '\tuint16_t nextSeqNumber = firstRtpHeader->seqNumber();', '''\tuint16_t nextSeqNumber = firstRtpHeader->seqNumber();
+\tconst auto lostFrame = [&] { return make_message(binary{}, createFrameInfo(timestamp, payloadType)); };''')
+replace(h264, '''\t\tif (rtpHeader->seqNumber() < nextSeqNumber) {
+\t\t\t// Skip
+\t\t\tcontinue;
+\t\t}
+\t\tif (rtpHeader->seqNumber() > nextSeqNumber) {
+\t\t\t// Missing packet(s)
+\t\t\tcontinuousFragments = false;
+\t\t}''', '''\t\t// The video depacketizer sorts and deduplicates in RTP sequence order.
+\t\tif (rtpHeader->seqNumber() != nextSeqNumber)
+\t\t\treturn lostFrame();''')
+replace(h264, '\t\tauto rtpHeaderSize = rtpHeader->getSize() + rtpHeader->getExtensionHeaderSize();', '''\t\tauto rtpHeaderSize = rtpHeader->getSize();
+\t\tif (rtpHeaderSize > packet->size() ||
+\t\t    (rtpHeader->extension() && packet->size() - rtpHeaderSize < sizeof(RtpExtensionHeader)))
+\t\t\treturn lostFrame();
+\t\trtpHeaderSize += rtpHeader->getExtensionHeaderSize();''')
+replace(h264, '''\t\tif (packet->size() <= rtpHeaderSize + paddingSize)
+\t\t\tcontinue; // Empty payload''', '''\t\tif (packet->size() < rtpHeaderSize + paddingSize)
+\t\t\treturn lostFrame();
+\t\tif (packet->size() == rtpHeaderSize + paddingSize)
+\t\t\tcontinue; // Empty payload''')
+replace(h264, '\t\tif (nalUnitHeader.unitType() == naluTypeFUA) {', '''\t\tif (nalUnitHeader.forbiddenBit())
+\t\t\treturn lostFrame();
+\t\tif (nalUnitHeader.unitType() == naluTypeFUA) {''')
+replace(h264, '''\t\t\tif (packet->size() <= rtpHeaderSize + paddingSize + 1)
+\t\t\t\tcontinue; // Empty FU-A''', '''\t\t\tif (packet->size() < rtpHeaderSize + paddingSize + 2)
+\t\t\t\treturn lostFrame();''')
+replace(h264, '\t\t\tif (nalUnitFragmentHeader.isStart()) {', '''\t\t\tif (nalUnitFragmentHeader.isStart() == continuousFragments ||
+\t\t\t    (nalUnitFragmentHeader.isStart() && nalUnitFragmentHeader.isEnd()))
+\t\t\t\treturn lostFrame();
+\t\t\tif (nalUnitFragmentHeader.isStart()) {''')
+replace(h264, '''\t\t} else {
+\t\t\tcontinuousFragments = false;
+
+\t\t\tif (nalUnitHeader.unitType() == naluTypeSTAPA) {''', '''\t\t} else {
+\t\t\tif (continuousFragments)
+\t\t\t\treturn lostFrame();
+
+\t\t\tif (nalUnitHeader.unitType() == naluTypeSTAPA) {''')
+replace(h264, '''\t\t\t\twhile (offset + 2 < packet->size() - paddingSize) {''', '''\t\t\t\tconst auto end = packet->size() - paddingSize;
+\t\t\t\twhile (offset < end) {
+\t\t\t\t\tif (end - offset < 2)
+\t\t\t\t\t\treturn lostFrame();''')
+replace(h264, '''\t\t\t\t\tif (offset + naluSize > packet->size() - paddingSize)
+\t\t\t\t\t\tthrow std::runtime_error("H264 STAP-A size is larger than payload");''', '''\t\t\t\t\tif (naluSize == 0 || size_t(naluSize) > end - offset)
+\t\t\t\t\t\treturn lostFrame();''')
+replace(h264, '\t\t\t\tthrow std::runtime_error("Unknown H264 RTP Packetization");', '\t\t\t\treturn lostFrame();')
+replace(h264, '\treturn make_message(std::move(frame), createFrameInfo(timestamp, payloadType));', '''\tif (continuousFragments)
+\t\treturn lostFrame();
+\tif (frame.empty())
+\t\treturn nullptr;
+\treturn make_message(std::move(frame), createFrameInfo(timestamp, payloadType));''')
+# PLI can also be requested by the client worker after an asynchronous decoder error.
+replace(Path('include/rtc/rtcpreceivingsession.hpp'), '\tSSRC mSsrc = 0;', '\tstd::atomic<SSRC> mSsrc{0};')
 replace(Path('deps/usrsctp/usrsctplib/user_environment.c'), '#elif defined(SCTP_USE_OPENSSL_RAND)', '''#elif defined(__SWITCH__)
 #include <switch.h>
 void init_random(void) {}

@@ -11,6 +11,7 @@
 [**下载最新版**](https://github.com/Antman2023/UURemote-ns/releases/latest) · [安装使用](#安装使用) · [按键操作](#按键操作) · [源码构建](#源码构建) · [开发记录](docs/development.md)
 
 > **当前为实验版，串流仍需 Switch 真机联调。**
+> v0.1.10 修复 H.264 缺片和损坏帧引起的花屏。画面保留上一张正常帧，并在收到新关键帧后恢复。已通过 WebRTC 回环和 Eden 软件解码测试。
 > v0.1.9 增加串流内远程键盘，并将包括减号在内的按键提示改成内置图片。已用 Eden 合成串流验证按键图片以及键盘的打开和关闭，Switch 真机仍待复测。
 
 ## 功能与验证状态
@@ -45,9 +46,9 @@
 
 准备一台能够运行自制程序的 Nintendo Switch，以及已安装原版 UU远程的电脑和手机。Switch 需要联网；手机与电脑使用同一个 UU 账号。
 
-1. 下载 [SD 卡安装包](https://github.com/Antman2023/UURemote-ns/releases/download/v0.1.9/UURemote-ns-0.1.9-switch.zip)，解压到 SD 卡根目录；更新时覆盖原 NRO。
+1. 下载 [SD 卡安装包](https://github.com/Antman2023/UURemote-ns/releases/download/v0.1.10/UURemote-ns-0.1.10-switch.zip)，解压到 SD 卡根目录；更新时覆盖原 NRO。
 2. 在电脑上打开**原版 UU远程电脑端**，登录账号并保持在线。
-3. 更新后先退出旧程序。在 Switch 上按住 **R** 启动一个游戏，进入完整内存模式的 hbmenu，再打开 **UU Remote NS**。首页应显示 **v0.1.9**；若没有，请检查是否启动了其他目录的旧副本。不支持相册小程序模式。
+3. 更新后先退出旧程序。在 Switch 上按住 **R** 启动一个游戏，进入完整内存模式的 hbmenu，再打开 **UU Remote NS**。首页应显示 **v0.1.10**；若没有，请检查是否启动了其他目录的旧副本。不支持相册小程序模式。
 4. 按 **A** 获取大尺寸二维码，使用手机官方 UU远程 App 扫码并确认；也可按 **X** 切换短信登录，输入区号、手机号，发送验证码后输入 6 位验证码并选择「登录」。短信界面用 **↑ / ↓** 选择项目，**A** 打开系统数字键盘或确认，重发需等待 60 秒。
 5. 选择列表中的在线电脑，按 **A** 连接；远程桌面中按 **−** 断开。
 
@@ -60,7 +61,7 @@ SD 卡根目录/
         └── UURemote-ns.nro
 ```
 
-也可下载 [单独的 NRO](https://github.com/Antman2023/UURemote-ns/releases/download/v0.1.9/UURemote-ns.nro)，手动放到上述目录。[SHA256SUMS](https://github.com/Antman2023/UURemote-ns/releases/download/v0.1.9/SHA256SUMS) 用于校验 NRO 和安装包。
+也可下载 [单独的 NRO](https://github.com/Antman2023/UURemote-ns/releases/download/v0.1.10/UURemote-ns.nro)，手动放到上述目录。[SHA256SUMS](https://github.com/Antman2023/UURemote-ns/releases/download/v0.1.10/SHA256SUMS) 用于校验 NRO 和安装包。
 
 使用新版 NRO 在 Eden 中测试时，可以在模拟 SD 卡的 `switch/UURemote-ns/` 下创建空文件 `software-video`（无扩展名）并重启客户端。此模式使用软件解码，适用于 NVDEC 模拟出现绿屏、花屏或无画面的情况。移除该文件后恢复自动选择。
 
