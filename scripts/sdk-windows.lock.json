@@ -60,6 +60,12 @@
     "sha256": "c6950bdf8e4b872ece492225368c03e633776329548a7494f91aa1e8f239cd8a"
   },
   {
+    "name": "switch-bzip2",
+    "version": "1.0.8-1",
+    "url": "https://pkg.devkitpro.org/packages/switch-bzip2-1.0.8-1-any.pkg.tar.xz?x=1",
+    "sha256": "f12b167f55ef49e2ddd9b2287cdfb702a2521f88e24ef23966b31d7c56e8acba"
+  },
+  {
     "name": "switch-cmake",
     "version": "1.5.2-1",
     "url": "https://pkg.devkitpro.org/packages/switch-cmake-1.5.2-1-any.pkg.tar.zst?x=1",
@@ -100,6 +106,18 @@
     "version": "0.17.3-1",
     "url": "https://pkg.devkitpro.org/packages/switch-libass-0.17.3-1-any.pkg.tar.zst?x=1",
     "sha256": "c618ed7c9f0a88924cc7dc23baddcb227979689501754af520310dcf4b1f63e6"
+  },
+  {
+    "name": "switch-libdrm_nouveau",
+    "version": "1.0.1-2",
+    "url": "https://pkg.devkitpro.org/packages/switch-libdrm_nouveau-1.0.1-2-any.pkg.tar.xz?x=1",
+    "sha256": "c587c9c3114ad0b49e8b39c2f2c5238fc5c17bca1be1139996a10fce6c3026d8"
+  },
+  {
+    "name": "switch-libopus",
+    "version": "1.3-2",
+    "url": "https://pkg.devkitpro.org/packages/switch-libopus-1.3-2-any.pkg.tar.xz?x=1",
+    "sha256": "2ac5492f44a01fb96fcb7184680bc27054dcfab847288a78c3ead69a00961576"
   },
   {
     "name": "switch-libpng",

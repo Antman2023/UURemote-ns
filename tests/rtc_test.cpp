@@ -21,7 +21,8 @@ extern "C" int __wrap_pthread_detach(pthread_t) {
 int loopback() {
     std::mutex mutex;
     std::condition_variable cv;
-    bool input = false, picture = false, audio = false;
+    bool input = false, picture = false, audio = false, keyframeRequested = false;
+    bool controlOpened = false, controlClosed = false;
     int result = 1;
     {
         rtc::Configuration config;
@@ -79,16 +80,25 @@ int loopback() {
             std::make_shared<rtc::H264RtpDepacketizer>(rtc::NalUnit::Separator::StartSequence);
         depacketizer->addToChain(std::make_shared<rtc::RtcpReceivingSession>());
         receiver->setMediaHandler(depacketizer);
-        receiver->onFrame([&](rtc::binary data, rtc::FrameInfo) {
+        std::weak_ptr<rtc::Track> weakReceiver = receiver;
+        receiver->onFrame([&, weakReceiver](rtc::binary data, rtc::FrameInfo) {
+            const bool valid = data == rtc::binary{std::byte{0},    std::byte{0},    std::byte{0},   std::byte{1},
+                                                   std::byte{0x65}, std::byte{0x42}, std::byte{0x17}};
+            if (auto track = weakReceiver.lock(); valid && track)
+                track->requestKeyframe();
             std::lock_guard lock(mutex);
-            picture = data == rtc::binary{std::byte{0},    std::byte{0},    std::byte{0},   std::byte{1},
-                                          std::byte{0x65}, std::byte{0x42}, std::byte{0x17}};
+            picture = valid;
             cv.notify_all();
         });
         rtc::Description::Video send("0", rtc::Description::Direction::SendOnly);
         send.addH264Codec(96);
         send.addSSRC(1234, "test");
         auto sender = host->addTrack(send);
+        sender->setMediaHandler(std::make_shared<rtc::PliHandler>([&] {
+            std::lock_guard lock(mutex);
+            keyframeRequested = true;
+            cv.notify_all();
+        }));
         rtc::Description::Audio recvAudio("1", rtc::Description::Direction::RecvOnly);
         recvAudio.addOpusCodec(111);
         auto audioReceiver = controller->addTrack(recvAudio);
@@ -103,6 +113,7 @@ int loopback() {
         sendAudio.addSSRC(1235, "audio-test");
         auto audioSender = host->addTrack(sendAudio);
         std::vector<std::shared_ptr<rtc::DataChannel>> remoteChannels;
+        std::shared_ptr<rtc::DataChannel> remoteControl;
         host->onDataChannel([&](std::shared_ptr<rtc::DataChannel> channel) {
             channel->onMessage(
                 [&](rtc::binary data) {
@@ -113,9 +124,22 @@ int loopback() {
                 },
                 nullptr);
             std::lock_guard lock(mutex);
+            if (channel->label() == "CONTROL_DATA_CHANNEL")
+                remoteControl = channel;
             remoteChannels.push_back(std::move(channel));
+            cv.notify_all();
         });
         auto control = controller->createDataChannel("CONTROL_DATA_CHANNEL");
+        control->onOpen([&] {
+            std::lock_guard lock(mutex);
+            controlOpened = control->isOpen();
+            cv.notify_all();
+        });
+        control->onClosed([&] {
+            std::lock_guard lock(mutex);
+            controlClosed = !control->isOpen();
+            cv.notify_all();
+        });
         std::vector<std::shared_ptr<rtc::DataChannel>> channels{control};
         for (const char *label :
              {"TEXT_DATA_CHANNEL", "STREAMER_DATA_CHANNEL", "FILE_DATA_CHANNEL", "BINARY_DATA_CHANNEL"})
@@ -124,12 +148,13 @@ int loopback() {
             return std::all_of(channels.begin(), channels.end(),
                                [](const auto &channel) { return channel->isOpen(); });
         };
+        const bool controlInitiallyClosed = !control->isOpen();
         controller->setLocalDescription();
         auto until = std::chrono::steady_clock::now() + std::chrono::seconds(20);
         while (std::chrono::steady_clock::now() < until &&
                (!channelsOpen() || !sender->isOpen() || !audioSender->isOpen()))
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        if (channelsOpen() && sender->isOpen() && audioSender->isOpen()) {
+        if (controlInitiallyClosed && channelsOpen() && sender->isOpen() && audioSender->isOpen()) {
             const std::string message = "{\"action\":\"kbd_press\",\"key\":87}";
             control->send(reinterpret_cast<const std::byte *>(message.data()), message.size());
             const uint8_t packet[] = {0x80, 0xe0, 0, 1, 0, 0, 0, 1, 0, 0, 4, 0xd2, 0x65, 0x42, 0x17};
@@ -137,10 +162,21 @@ int loopback() {
             const uint8_t opusPacket[] = {0x80, 0xef, 0, 1, 0, 0, 0, 1, 0, 0, 4, 0xd3, 0xf8, 0xff, 0xfe};
             audioSender->send(reinterpret_cast<const std::byte *>(opusPacket), sizeof(opusPacket));
             std::unique_lock lock(mutex);
-            cv.wait_until(lock, until, [&] { return input && picture && audio; });
-            if (input && picture && audio)
-                result = 0;
+            const auto complete = [&] {
+                return input && picture && audio && keyframeRequested && controlOpened && remoteControl;
+            };
+            if (cv.wait_until(lock, until, complete)) {
+                const auto channel = remoteControl;
+                lock.unlock();
+                channel->close();
+                lock.lock();
+                const auto closeUntil = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+                if (cv.wait_until(lock, closeUntil, [&] { return controlClosed; }) &&
+                    controller->state() == rtc::PeerConnection::State::Connected)
+                    result = 0;
+            }
         }
+        control->resetCallbacks();
         controller->resetCallbacks();
         host->resetCallbacks();
         receiver->resetCallbacks();
@@ -179,7 +215,7 @@ int loopback() {
     std::cout
         << (result
                 ? "WebRTC loopback failed"
-                : "WebRTC loopback passed: ICE, DTLS, five SCTP channels, binary input, SRTP H.264 and Opus")
+                : "WebRTC loopback passed: ICE, DTLS, control channel lifecycle, input, H.264, Opus and PLI")
         << '\n';
     return result;
 }

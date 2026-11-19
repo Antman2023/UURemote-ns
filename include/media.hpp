@@ -21,10 +21,11 @@ class Media {
   public:
     Media();
     ~Media();
-    void video(const uint8_t *data, size_t size, uint64_t generation);
+    // Returns true when the receiver should request a fresh keyframe.
+    bool video(const uint8_t *data, size_t size, uint64_t generation);
     void audio(const uint8_t *data, size_t size, uint64_t generation);
     uint64_t generation() const;
-    Picture picture(uint64_t after);
+    std::shared_ptr<const Picture> picture(uint64_t after);
     void reset();
     std::string status();
 };

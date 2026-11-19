@@ -11,6 +11,7 @@ struct Snapshot {
     std::string stage = "idle", detail = "按 A 扫码登录，或按 X 使用短信验证码", qrUrl, nickname;
     Json devices = Json::array();
     bool authenticated = false, streaming = false;
+    uint64_t inputGeneration = 0;
     int width = 1280, height = 720, fps = 30;
     std::string loginMode = "qr";
     int64_t smsRetryAt = 0;
@@ -58,6 +59,7 @@ class Client {
     void packet(const WsMessage &message);
     void dispatch(const SioPacket &packet);
     void beginPeer(const Json &control);
+    void updateConnectionReadiness();
     void handleSoac(const Json &data);
     void emit(const std::string &name, const Json &data, const std::string &ack = "",
               const Bytes &attachment = {});
@@ -75,5 +77,6 @@ class Client {
     ~Client();
     Snapshot snapshot();
     void command(const std::string &name, Json data = nullptr);
+    void sendInput(uint64_t generation, Json data);
 };
 } // namespace uu

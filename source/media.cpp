@@ -6,7 +6,9 @@ extern "C" {
 #include <libavutil/hwcontext.h>
 #include <libswscale/swscale.h>
 }
+#include <chrono>
 #include <stdexcept>
+#include <utility>
 
 namespace uu {
 namespace {
@@ -28,8 +30,9 @@ struct Media::Impl {
     std::mutex mutex, audioMutex;
     std::condition_variable cv;
     std::deque<Bytes> queue;
-    Picture latest;
-    bool stop = false, clear = false;
+    std::shared_ptr<const Picture> latest;
+    bool stop = false, clear = false, recovering = false;
+    std::chrono::steady_clock::time_point nextKeyframeRequest{};
     std::thread thread;
     SDL_AudioDeviceID audioDevice = 0;
     OpusDecoder *opus = nullptr;
@@ -126,27 +129,35 @@ struct Media::Impl {
         while (true) {
             Bytes data;
             uint64_t currentGeneration;
+            bool flush, needsKeyframe;
             {
                 std::unique_lock lock(mutex);
                 cv.wait(lock, [&] { return stop || clear || !queue.empty(); });
                 if (stop)
                     break;
-                if (clear) {
-                    avcodec_flush_buffers(ctx);
-                    clear = false;
+                flush = std::exchange(clear, false);
+                if (!queue.empty()) {
+                    data = std::move(queue.front());
+                    queue.pop_front();
                 }
-                if (queue.empty())
-                    continue;
-                data = std::move(queue.front());
-                queue.pop_front();
                 currentGeneration = generation.load();
+                needsKeyframe = recovering;
             }
+            if (flush)
+                avcodec_flush_buffers(ctx);
+            if (data.empty())
+                continue;
             av_packet_unref(packet);
             if (av_new_packet(packet, int(data.size())) < 0)
                 continue;
             std::copy(data.begin(), data.end(), packet->data);
             auto drain = [&] {
                 while (avcodec_receive_frame(ctx, frame) == 0) {
+                    const bool keyframe = (frame->flags & AV_FRAME_FLAG_KEY) != 0;
+                    if ((frame->flags & AV_FRAME_FLAG_CORRUPT) || (needsKeyframe && !keyframe)) {
+                        av_frame_unref(frame);
+                        continue;
+                    }
                     AVFrame *source = frame;
 #ifdef __SWITCH__
                     if (frame->format == AV_PIX_FMT_NVTEGRA) {
@@ -158,26 +169,30 @@ struct Media::Impl {
                         source = cpu;
                     }
 #endif
-                    if (source->width <= 0 || source->height <= 0 || source->width > 4096 ||
-                        source->height > 2160) {
+                    const int width = source->width, height = source->height;
+                    if (width <= 0 || height <= 0 || width > 4096 || height > 2160) {
                         av_frame_unref(frame);
                         continue;
                     }
-                    Picture p;
-                    p.width = source->width;
-                    p.height = source->height;
-                    p.pixels.resize(size_t(p.width) * p.height * 4);
-                    sws = sws_getCachedContext(sws, p.width, p.height, AVPixelFormat(source->format), p.width,
-                                               p.height, AV_PIX_FMT_RGBA, SWS_FAST_BILINEAR, nullptr, nullptr,
+                    sws = sws_getCachedContext(sws, width, height, AVPixelFormat(source->format), width,
+                                               height, AV_PIX_FMT_RGBA, SWS_FAST_BILINEAR, nullptr, nullptr,
                                                nullptr);
                     if (sws) {
-                        uint8_t *dst[] = {p.pixels.data()};
-                        int stride[] = {p.width * 4};
-                        sws_scale(sws, source->data, source->linesize, 0, p.height, dst, stride);
-                        std::lock_guard lock(mutex);
-                        if (currentGeneration == generation.load()) {
-                            p.serial = ++serial;
-                            latest = std::move(p);
+                        auto picture = std::make_shared<Picture>();
+                        picture->width = width;
+                        picture->height = height;
+                        picture->pixels.resize(size_t(width) * height * 4);
+                        uint8_t *dst[] = {picture->pixels.data()};
+                        int stride[] = {width * 4};
+                        if (sws_scale(sws, source->data, source->linesize, 0, height, dst, stride) == height) {
+                            std::lock_guard lock(mutex);
+                            // An overflow may invalidate an in-flight frame while it is being converted.
+                            if (!clear && currentGeneration == generation.load()) {
+                                picture->serial = ++serial;
+                                latest = std::move(picture);
+                                needsKeyframe = false;
+                                recovering = false;
+                            }
                         }
                     }
                     av_frame_unref(frame);
@@ -195,20 +210,30 @@ struct Media::Impl {
 };
 Media::Media() : impl_(std::make_unique<Impl>()) {}
 Media::~Media() = default;
-void Media::video(const uint8_t *data, size_t size, uint64_t generation) {
+bool Media::video(const uint8_t *data, size_t size, uint64_t generation) {
     if (!size || size > 2 * 1024 * 1024 || impl_->decoderFailed.load())
-        return;
+        return false;
+    bool requestKeyframe = false;
     {
         std::lock_guard lock(impl_->mutex);
         if (generation != impl_->generation.load())
-            return;
+            return false;
         if (impl_->queue.size() >= 8) {
             impl_->queue.clear();
             impl_->clear = true;
+            impl_->recovering = true;
         }
         impl_->queue.emplace_back(data, data + size);
+        if (impl_->recovering) {
+            const auto now = std::chrono::steady_clock::now();
+            if (now >= impl_->nextKeyframeRequest) {
+                impl_->nextKeyframeRequest = now + std::chrono::seconds(1);
+                requestKeyframe = true;
+            }
+        }
     }
     impl_->cv.notify_one();
+    return requestKeyframe;
 }
 void Media::audio(const uint8_t *data, size_t size, uint64_t generation) {
     if (!size || size > 4096)
@@ -226,9 +251,9 @@ void Media::audio(const uint8_t *data, size_t size, uint64_t generation) {
                                  : Impl::AudioStatus::QueueFailed;
     }
 }
-Picture Media::picture(uint64_t after) {
+std::shared_ptr<const Picture> Media::picture(uint64_t after) {
     std::lock_guard lock(impl_->mutex);
-    return impl_->latest.serial > after ? impl_->latest : Picture{};
+    return impl_->latest && impl_->latest->serial > after ? impl_->latest : nullptr;
 }
 void Media::reset() {
     {
@@ -237,13 +262,17 @@ void Media::reset() {
         // this lock. Advancing it earlier could relabel an old queued frame.
         impl_->generation.fetch_add(1);
         impl_->queue.clear();
-        impl_->latest = {};
+        impl_->latest.reset();
         impl_->clear = true;
+        impl_->recovering = false;
+        impl_->nextKeyframeRequest = {};
     }
     impl_->cv.notify_one();
     std::lock_guard lock(impl_->audioMutex);
-    if (impl_->audioDevice)
+    if (impl_->audioDevice) {
         SDL_ClearQueuedAudio(impl_->audioDevice);
+        impl_->audioStatus = Impl::AudioStatus::Ready;
+    }
     opus_decoder_ctl(impl_->opus, OPUS_RESET_STATE);
 }
 uint64_t Media::generation() const {

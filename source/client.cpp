@@ -7,6 +7,10 @@
 #include <stdexcept>
 
 namespace uu {
+namespace {
+constexpr char controlChannelLabel[] = "CONTROL_DATA_CHANNEL";
+} // namespace
+
 Client::Client(std::string key, std::string client, std::shared_ptr<Media> media) : media_(std::move(media)) {
     api_ = std::make_unique<Api>(std::move(key), std::move(client), cancel_);
     worker_ = std::thread([this] { run(); });
@@ -27,6 +31,7 @@ void Client::setState(const std::string &stage, const std::string &detail) {
     state_.stage = stage;
     state_.detail = detail;
     state_.streaming = stage == "connected";
+    state_.inputGeneration = state_.streaming ? generation_ : 0;
     state_.authenticated = api_->authenticated();
 }
 void Client::post(std::string type, Json data, uint64_t generation) {
@@ -38,6 +43,10 @@ void Client::command(const std::string &name, Json data) {
     if (name == "disconnect" || name == "logout" || name == "cancel" || name == "sms-open" || name == "login")
         cancel_ = true;
     post(name, std::move(data));
+}
+void Client::sendInput(uint64_t generation, Json data) {
+    if (generation)
+        post("input", std::move(data), generation);
 }
 void Client::drainEvents() {
     drainEventBatch(
@@ -84,11 +93,17 @@ void Client::run() {
                     throw std::runtime_error("信令心跳超时");
             }
             if (deadline_ && monotonicMs() > deadline_) {
-                if (peer_) {
-                    diagnostic(("timeout-peer-state-" + std::to_string(int(peer_->state()))).c_str());
-                    diagnostic(("timeout-ice-state-" + std::to_string(int(peer_->iceState()))).c_str());
+                updateConnectionReadiness();
+                if (deadline_) {
+                    if (peer_) {
+                        const auto state = peer_->state();
+                        diagnostic(("timeout-peer-state-" + std::to_string(int(state))).c_str());
+                        diagnostic(("timeout-ice-state-" + std::to_string(int(peer_->iceState()))).c_str());
+                        if (state == rtc::PeerConnection::State::Connected)
+                            throw std::runtime_error("远控通道打开超时，请检查电脑和网络后重试");
+                    }
+                    throw std::runtime_error("连接超时，请检查电脑和网络后重试");
                 }
-                throw std::runtime_error("连接超时，请检查电脑和网络后重试");
             }
             if (!qr_.is_null() && monotonicMs() >= qrNext_)
                 pollQr();
@@ -217,6 +232,12 @@ void Client::handle(const Event &event) {
     } else if (e == "candidate") {
         emit("soac", soac(remote_, "candidate", data, ice_, control_));
         diagnostic("soac-candidate-sent");
+    } else if (e == "control-open") {
+        diagnostic("rtc-control-open");
+        updateConnectionReadiness();
+    } else if (e == "control-closed") {
+        diagnostic("rtc-control-closed");
+        throw std::runtime_error("远控通道已关闭，请重新连接");
     } else if (e == "ice-state" || e == "gathering-state" || e == "signaling-state") {
         const auto label = "rtc-" + e + "-" + std::to_string(data.get<int>());
         diagnostic(label.c_str());
@@ -225,14 +246,13 @@ void Client::handle(const Event &event) {
         if (e == "ice-state" &&
             (data == int(rtc::PeerConnection::IceState::Connected) ||
              data == int(rtc::PeerConnection::IceState::Completed)) &&
-            !snapshot().streaming)
+            deadline_ && peer_ && peer_->state() != rtc::PeerConnection::State::Connected)
             setState("connecting", "网络通道已就绪，正在协商加密和数据通道…");
     } else if (e == "peer-state") {
         auto s = data.get<int>();
         diagnostic(("rtc-peer-state-" + std::to_string(s)).c_str());
         if (s == int(rtc::PeerConnection::State::Connected)) {
-            deadline_ = 0;
-            setState("connected", "已连接 · 左摇杆移动鼠标 · ZR/ZL 点击 · − 断开");
+            updateConnectionReadiness();
         } else if (s == int(rtc::PeerConnection::State::Failed) ||
                    s == int(rtc::PeerConnection::State::Disconnected) ||
                    s == int(rtc::PeerConnection::State::Closed)) {
@@ -433,21 +453,21 @@ void Client::beginPeer(const Json &result) {
     peer_ = std::make_shared<rtc::PeerConnection>(config);
     auto weak = std::weak_ptr<Inbox>(inbox_);
     auto gen = generation_;
-    auto post = [weak, gen](std::string type, Json data) {
+    auto post = [weak, gen](std::string type, Json data, bool essential = false) {
         if (auto box = weak.lock()) {
             std::lock_guard lock(box->mutex);
-            if (box->events.size() < 2048)
+            if (essential || box->events.size() < 2048)
                 box->events.push_back({std::move(type), std::move(data), gen});
             box->cv.notify_one();
         }
     };
     peer_->onLocalDescription([post](rtc::Description desc) {
-        post("local", {{"type", desc.typeString()}, {"sdp", std::string(desc)}});
+        post("local", {{"type", desc.typeString()}, {"sdp", std::string(desc)}}, true);
     });
     peer_->onLocalCandidate([post](rtc::Candidate c) {
         post("candidate", {{"candidate", std::string(c)}, {"sdpMid", c.mid()}, {"sdpMLineIndex", 0}});
     });
-    peer_->onStateChange([post](rtc::PeerConnection::State s) { post("peer-state", int(s)); });
+    peer_->onStateChange([post](rtc::PeerConnection::State s) { post("peer-state", int(s), true); });
     peer_->onIceStateChange([post](rtc::PeerConnection::IceState s) { post("ice-state", int(s)); });
     peer_->onGatheringStateChange(
         [post](rtc::PeerConnection::GatheringState s) { post("gathering-state", int(s)); });
@@ -462,10 +482,20 @@ void Client::beginPeer(const Json &result) {
     depacketizer->addToChain(std::make_shared<rtc::RtcpReceivingSession>());
     video_->setMediaHandler(depacketizer);
     std::weak_ptr<Media> media = media_;
+    std::weak_ptr<rtc::Track> video = video_;
     auto mediaGeneration = media_->generation();
-    video_->onFrame([media, mediaGeneration](rtc::binary data, rtc::FrameInfo) {
-        if (auto m = media.lock())
-            m->video(reinterpret_cast<const uint8_t *>(data.data()), data.size(), mediaGeneration);
+    video_->onFrame([media, video, mediaGeneration](rtc::binary data, rtc::FrameInfo) {
+        auto m = media.lock();
+        if (!m || !m->video(reinterpret_cast<const uint8_t *>(data.data()), data.size(), mediaGeneration))
+            return;
+        if (auto track = video.lock(); track && track->isOpen()) {
+            try {
+                if (track->requestKeyframe())
+                    diagnostic("video-keyframe-request");
+            } catch (const std::exception &) {
+                diagnostic("video-keyframe-request-failed");
+            }
+        }
     });
     rtc::Description::Audio a("1", rtc::Description::Direction::RecvOnly);
     diagnostic("rtc-audio");
@@ -479,15 +509,29 @@ void Client::beginPeer(const Json &result) {
             m->audio(reinterpret_cast<const uint8_t *>(data.data()), data.size(), mediaGeneration);
     });
     diagnostic("rtc-channels");
-    for (const auto *label : {"CONTROL_DATA_CHANNEL", "TEXT_DATA_CHANNEL", "STREAMER_DATA_CHANNEL",
+    for (const auto *label : {controlChannelLabel, "TEXT_DATA_CHANNEL", "STREAMER_DATA_CHANNEL",
                               "FILE_DATA_CHANNEL", "BINARY_DATA_CHANNEL"})
         channels_[label] = peer_->createDataChannel(label);
+    const auto &channel = channels_.at(controlChannelLabel);
+    channel->onOpen([post] { post("control-open", nullptr, true); });
+    channel->onClosed([post] { post("control-closed", nullptr, true); });
     setState("connecting", "正在建立音视频通道…");
     diagnostic("rtc-offer");
     peer_->setLocalDescription();
     for (const auto &e : earlySoac_)
         handleSoac(e);
     earlySoac_.clear();
+}
+void Client::updateConnectionReadiness() {
+    if (!deadline_ || !peer_ || peer_->state() != rtc::PeerConnection::State::Connected)
+        return;
+    const auto channel = channels_.find(controlChannelLabel);
+    if (channel == channels_.end() || !channel->second->isOpen()) {
+        setState("connecting", "音视频通道已就绪，正在打开远控通道…");
+        return;
+    }
+    deadline_ = 0;
+    setState("connected", "已连接 · 左摇杆移动鼠标 · ZR/ZL 点击 · − 断开");
 }
 void Client::handleSoac(const Json &packet) {
     if (!packet.contains("data") || !packet["data"].is_object())
@@ -514,7 +558,7 @@ void Client::handleSoac(const Json &packet) {
         diagnostic("soac-description-applied");
 }
 void Client::input(const Json &data) {
-    auto it = channels_.find("CONTROL_DATA_CHANNEL");
+    auto it = channels_.find(controlChannelLabel);
     if (it == channels_.end() || !it->second->isOpen())
         return;
     const auto action = data.value("action", std::string{});
@@ -573,6 +617,7 @@ void Client::disconnect() {
         std::lock_guard lock(stateMutex_);
         state_.qrUrl.clear();
         state_.streaming = false;
+        state_.inputGeneration = 0;
     }
 }
 } // namespace uu

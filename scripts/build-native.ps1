@@ -18,11 +18,17 @@ try {
     $env:PKG_CONFIG_LIBDIR = Join-Path $nativeSdk 'lib/pkgconfig'
     $cmakeExe = (Get-Command cmake -ErrorAction Stop).Source
     $ctestExe = (Get-Command ctest -ErrorAction Stop).Source
-    $configure = @('-S', '.', '-B', 'build-native', '-G', 'Ninja', '-DCMAKE_BUILD_TYPE=Debug', '-DUU_NATIVE_TESTS=ON',
+    $configure = @('-S', '.', '-B', 'build-native', '-DCMAKE_BUILD_TYPE=Debug', '-DUU_NATIVE_TESTS=ON',
         "-DCMAKE_C_COMPILER=$nativeSdk/bin/gcc.exe", "-DCMAKE_CXX_COMPILER=$nativeSdk/bin/g++.exe",
         "-DPKG_CONFIG_EXECUTABLE=$nativeSdk/bin/pkgconf.exe")
+    $cache = 'build-native/CMakeCache.txt'
+    $hasCache = Test-Path -LiteralPath $cache
+    if (-not $hasCache) { $configure += @('-G', 'Ninja') }
     $localNinja = Join-Path $projectRoot '.tools/ninja/ninja.exe'
-    if (Test-Path -LiteralPath $localNinja) { $configure += "-DCMAKE_MAKE_PROGRAM=$($localNinja.Replace('\', '/'))" }
+    if ((Test-Path -LiteralPath $localNinja) -and
+        (-not $hasCache -or (Select-String -LiteralPath $cache -Pattern '^CMAKE_GENERATOR:INTERNAL=Ninja$' -Quiet))) {
+        $configure += "-DCMAKE_MAKE_PROGRAM=$($localNinja.Replace('\', '/'))"
+    }
     & $cmakeExe @configure
     if ($LASTEXITCODE) { throw 'Native configuration failed' }
     & $cmakeExe --build build-native -j $Jobs

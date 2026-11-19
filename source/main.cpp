@@ -1,16 +1,21 @@
 #include "background.hpp"
 #include "client.hpp"
+#include "controller_input.hpp"
 #include "diagnostics.hpp"
 #include "qrcodegen.hpp"
 #include "rtc_diagnostics.hpp"
 #include <SDL_ttf.h>
+#include <array>
+#include <atomic>
 #include <cmath>
 #include <exception>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <sys/stat.h>
+#include <utility>
 #ifdef __SWITCH__
 #include <switch.h>
 #endif
@@ -129,19 +134,43 @@ struct Controls {
     uint64_t held = 0;
 };
 #ifdef __SWITCH__
+constexpr std::pair<uint64_t, int> controllerKeys[] = {
+    {HidNpadButton_A, 13}, {HidNpadButton_B, 27}, {HidNpadButton_X, 32}, {HidNpadButton_Y, 9},
+    {HidNpadButton_L, 17}, {HidNpadButton_R, 16}, {HidNpadButton_Up, 87}, {HidNpadButton_Down, 83},
+    {HidNpadButton_Left, 65}, {HidNpadButton_Right, 68},
+};
+
+uu::ControllerSample sampleController(uu::ControllerInput &input, uint64_t buttons, uu::InputArea area) {
+    HidTouchScreenState touch{};
+    std::array<uu::TouchContact, std::size(touch.touches)> contacts;
+    std::size_t count = 0;
+    if (hidGetTouchScreenStates(&touch, 1)) {
+        for (int i = 0; i < std::min(touch.count, int(contacts.size())); ++i) {
+            const auto &contact = touch.touches[i];
+            if (!(contact.attributes & HidTouchAttribute_End))
+                contacts[count++] = {contact.finger_id, int(contact.x), int(contact.y)};
+        }
+    }
+    return input.sample(buttons, HidNpadButton_ZR, contacts.data(), count, area);
+}
+
 struct FocusHook {
     AppletHookCookie cookie{};
-    explicit FocusHook(uu::Client &client) {
+    uu::Client &client;
+    std::atomic<bool> resetInput{false};
+    explicit FocusHook(uu::Client &client) : client(client) {
         appletHook(
             &cookie,
             [](AppletHookType type, void *data) {
                 if ((type == AppletHookType_OnFocusState &&
                      appletGetFocusState() != AppletFocusState_InFocus) ||
                     type == AppletHookType_OnExitRequest) {
-                    static_cast<uu::Client *>(data)->command("release");
+                    auto &hook = *static_cast<FocusHook *>(data);
+                    hook.client.command("release");
+                    hook.resetInput = true;
                 }
             },
-            &client);
+            this);
     }
     ~FocusHook() {
         appletUnhook(&cookie);
@@ -228,38 +257,69 @@ int main(int, char **) {
                 uu::Client client(key, id, media);
 #ifdef __SWITCH__
                 FocusHook focusHook(client);
+                uu::ControllerInput controllerInput;
+                Uint32 lastScroll = 0, lastPointer = 0;
+#else
+                bool focused = (SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS) != 0;
+                Uint32 heldMouse = 0;
 #endif
-                bool running = true, overlay = true, wasStreaming = false, touchHeld = false;
+                bool running = true, overlay = true, wasStreaming = false;
                 int selected = 0, texW = 0, texH = 0;
-                uint64_t serial = 0, lastHeld = 0;
+                uint64_t serial = 0;
                 float cursorX = .5f, cursorY = .5f, focusY = 230;
-                Uint32 previous = SDL_GetTicks(), lastScroll = 0, lastPointer = 0;
-                SDL_Texture *video = nullptr;
+                Uint32 previous = SDL_GetTicks();
+                using VideoTexture = std::unique_ptr<SDL_Texture, decltype(&SDL_DestroyTexture)>;
+                VideoTexture video(nullptr, SDL_DestroyTexture);
                 std::string qrUrl;
                 std::unique_ptr<qrcodegen::QrCode> qr;
                 SmsForm sms;
                 SDL_Rect viewport{0, 0, 1280, 720};
-                auto send = [&](const uu::Json &data) { client.command("input", data); };
                 while (running) {
 #ifdef __SWITCH__
                     if (!appletMainLoop())
                         break;
+                    const bool focused = appletGetFocusState() == AppletFocusState_InFocus;
 #endif
-                    Uint32 now = SDL_GetTicks();
-                    float dt = std::min((now - previous) / 1000.f, .05f);
+                    const Uint32 now = SDL_GetTicks();
+                    const float dt = std::min((now - previous) / 1000.f, .05f);
                     previous = now;
                     auto state = client.snapshot();
+                    const auto send = [&client, generation = state.inputGeneration](uu::Json data) {
+                        client.sendInput(generation, std::move(data));
+                    };
+                    const auto movePointer = [&](uu::PointerPosition position) {
+                        cursorX = position.x;
+                        cursorY = position.y;
+                        send({{"action", "mouse_move_absolute"}, {"abs_x", cursorX}, {"abs_y", cursorY}});
+                    };
+#ifdef __SWITCH__
+                    if (focusHook.resetInput.exchange(false) || !focused || !state.streaming)
+                        controllerInput.reset();
+#else
+                    if (!state.streaming)
+                        heldMouse = 0;
+#endif
+                    const uu::InputArea inputArea =
+                        video ? uu::InputArea{viewport.x, viewport.y, viewport.w, viewport.h} : uu::InputArea{};
                     selected = std::clamp(selected, 0, std::max(0, int(state.devices.size()) - 1));
                     Controls c;
                     SDL_Event event;
                     while (SDL_PollEvent(&event)) {
                         if (event.type == SDL_QUIT)
                             running = false;
-                        if (event.type == SDL_WINDOWEVENT &&
-                            event.window.event == SDL_WINDOWEVENT_FOCUS_LOST) {
-                            client.command("release");
-                            touchHeld = false;
+#ifndef __SWITCH__
+                        if (event.type == SDL_WINDOWEVENT) {
+                            if (event.window.event == SDL_WINDOWEVENT_FOCUS_LOST) {
+                                focused = false;
+                                client.command("release");
+                                heldMouse = 0;
+                                c = {};
+                            } else if (event.window.event == SDL_WINDOWEVENT_FOCUS_GAINED)
+                                focused = true;
                         }
+#endif
+                        if (!focused || !running)
+                            continue;
                         if (event.type == SDL_KEYDOWN && !event.key.repeat) {
                             auto k = event.key.keysym.sym;
                             c.confirm |= k == SDLK_RETURN;
@@ -273,27 +333,30 @@ int main(int, char **) {
                             c.exit |= k == SDLK_F10;
                         }
 #ifndef __SWITCH__
+                        if (state.streaming && event.type == SDL_MOUSEMOTION &&
+                            inputArea.contains(event.motion.x, event.motion.y))
+                            movePointer(inputArea.position(event.motion.x, event.motion.y));
                         if (state.streaming &&
-                            (event.type == SDL_MOUSEMOTION || event.type == SDL_MOUSEBUTTONDOWN ||
-                             event.type == SDL_MOUSEBUTTONUP)) {
-                            if (event.type == SDL_MOUSEMOTION) {
-                                cursorX =
-                                    std::clamp((event.motion.x - viewport.x) / float(viewport.w), 0.f, 1.f);
-                                cursorY =
-                                    std::clamp((event.motion.y - viewport.y) / float(viewport.h), 0.f, 1.f);
-                                send({{"action", "mouse_move_absolute"},
-                                      {"abs_x", cursorX},
-                                      {"abs_y", cursorY}});
-                            } else
-                                send({{"action",
-                                       event.type == SDL_MOUSEBUTTONDOWN ? "mouse_press" : "mouse_release"},
-                                      {"button", event.button.button == SDL_BUTTON_LEFT ? 1 : 2}});
+                            (event.type == SDL_MOUSEBUTTONDOWN || event.type == SDL_MOUSEBUTTONUP) &&
+                            (event.button.button == SDL_BUTTON_LEFT ||
+                             event.button.button == SDL_BUTTON_RIGHT)) {
+                            const auto bit = SDL_BUTTON(event.button.button);
+                            const int button = event.button.button == SDL_BUTTON_LEFT ? 1 : 2;
+                            if (event.type == SDL_MOUSEBUTTONDOWN && !(heldMouse & bit) &&
+                                inputArea.contains(event.button.x, event.button.y)) {
+                                movePointer(inputArea.position(event.button.x, event.button.y));
+                                send({{"action", "mouse_press"}, {"button", button}});
+                                heldMouse |= bit;
+                            } else if (event.type == SDL_MOUSEBUTTONUP && (heldMouse & bit)) {
+                                send({{"action", "mouse_release"}, {"button", button}});
+                                heldMouse &= ~bit;
+                            }
                         }
 #endif
                     }
 #ifdef __SWITCH__
                     padUpdate(&pad);
-                    uint64_t pressed = padGetButtonsDown(&pad);
+                    const uint64_t pressed = focused ? padGetButtonsDown(&pad) : 0;
                     c.held = padGetButtons(&pad);
                     c.confirm |= pressed & HidNpadButton_A;
                     c.back |= pressed & HidNpadButton_B;
@@ -315,8 +378,8 @@ int main(int, char **) {
 #endif
                     bool busy = state.stage != "idle" && state.stage != "error" && state.stage != "login" &&
                                 state.stage != "sms";
-                    if (c.exit)
-                        running = false;
+                    if (c.exit || !running)
+                        break;
                     if (state.streaming) {
                         if (c.help)
                             overlay = !overlay;
@@ -324,57 +387,35 @@ int main(int, char **) {
                             client.command("disconnect");
                             continue;
                         }
-                        cursorX = std::clamp(cursorX + c.mx * dt * .7f, 0.f, 1.f);
-                        cursorY = std::clamp(cursorY + c.my * dt * .7f, 0.f, 1.f);
-                        if ((c.mx || c.my) && now - lastPointer >= 16) {
-                            send({{"action", "mouse_move_absolute"}, {"abs_x", cursorX}, {"abs_y", cursorY}});
-                            lastPointer = now;
-                        }
-                        if (c.scroll && now - lastScroll > 80) {
-                            send({{"action", "mouse_scroll"},
-                                  {"delta_x", 0},
-                                  {"delta_y", int(c.scroll * 120)}});
-                            lastScroll = now;
-                        }
 #ifdef __SWITCH__
-                        for (auto [button, keycode] :
-                             std::initializer_list<std::pair<uint64_t, int>>{{HidNpadButton_A, 13},
-                                                                             {HidNpadButton_B, 27},
-                                                                             {HidNpadButton_X, 32},
-                                                                             {HidNpadButton_Y, 9},
-                                                                             {HidNpadButton_L, 17},
-                                                                             {HidNpadButton_R, 16},
-                                                                             {HidNpadButton_Up, 87},
-                                                                             {HidNpadButton_Down, 83},
-                                                                             {HidNpadButton_Left, 65},
-                                                                             {HidNpadButton_Right, 68}}) {
-                            if ((c.held & button) != (lastHeld & button))
-                                send({{"action", (c.held & button) ? "kbd_press" : "kbd_release"},
-                                      {"key", keycode}});
-                        }
-                        for (auto [button, mouse] : std::initializer_list<std::pair<uint64_t, int>>{
-                                 {HidNpadButton_ZR, 1}, {HidNpadButton_ZL, 2}})
-                            if ((c.held & button) != (lastHeld & button))
-                                send({{"action", (c.held & button) ? "mouse_press" : "mouse_release"},
-                                      {"button", mouse}});
-                        HidTouchScreenState touch{};
-                        hidGetTouchScreenStates(&touch, 1);
-                        bool inside = false;
-                        if (touch.count) {
-                            auto p = touch.touches[0];
-                            inside = int(p.x) >= viewport.x && int(p.x) < viewport.x + viewport.w &&
-                                     int(p.y) >= viewport.y && int(p.y) < viewport.y + viewport.h;
-                            if (inside) {
-                                cursorX = (p.x - viewport.x) / float(viewport.w);
-                                cursorY = (p.y - viewport.y) / float(viewport.h);
-                                send({{"action", "mouse_move_absolute"},
-                                      {"abs_x", cursorX},
-                                      {"abs_y", cursorY}});
+                        if (focused) {
+                            const auto input = sampleController(controllerInput, c.held, inputArea);
+                            if (input.leftChanged && !input.left)
+                                send({{"action", "mouse_release"}, {"button", 1}});
+                            if (input.touchMove)
+                                movePointer(*input.touchMove);
+                            if (!input.touchActive) {
+                                cursorX = std::clamp(cursorX + c.mx * dt * .7f, 0.f, 1.f);
+                                cursorY = std::clamp(cursorY + c.my * dt * .7f, 0.f, 1.f);
+                                if ((c.mx || c.my) && now - lastPointer >= 16) {
+                                    movePointer({cursorX, cursorY});
+                                    lastPointer = now;
+                                }
                             }
-                        }
-                        if (inside != touchHeld) {
-                            send({{"action", inside ? "mouse_press" : "mouse_release"}, {"button", 1}});
-                            touchHeld = inside;
+                            if (c.scroll && now - lastScroll > 80) {
+                                send({{"action", "mouse_scroll"}, {"delta_x", 0},
+                                      {"delta_y", int(c.scroll * 120)}});
+                                lastScroll = now;
+                            }
+                            for (auto [button, keycode] : controllerKeys)
+                                if (input.changed & button)
+                                    send({{"action", (input.held & button) ? "kbd_press" : "kbd_release"},
+                                          {"key", keycode}});
+                            if (input.leftChanged && input.left)
+                                send({{"action", "mouse_press"}, {"button", 1}});
+                            if (input.changed & HidNpadButton_ZL)
+                                send({{"action", (input.held & HidNpadButton_ZL) ? "mouse_press" : "mouse_release"},
+                                      {"button", 2}});
                         }
 #else
                         if (c.confirm) {
@@ -388,14 +429,11 @@ int main(int, char **) {
 #endif
                     } else {
                         if (wasStreaming) {
-                            if (video) {
-                                SDL_DestroyTexture(video);
-                                video = nullptr;
-                            }
+                            video.reset();
                             serial = 0;
                             texW = texH = 0;
+                            viewport = {0, 0, 1280, 720};
                             overlay = true;
-                            touchHeld = false;
                         }
                         if (!state.authenticated && c.logout && (!busy || state.stage == "login")) {
                             sms = SmsForm{};
@@ -434,7 +472,6 @@ int main(int, char **) {
                                         }
 #ifdef __SWITCH__
                                         padUpdate(&pad);
-                                        lastHeld = padGetButtons(&pad);
 #endif
                                     } else if (sms.selected == 3 && uu::monotonicMs() >= state.smsRetryAt) {
                                         client.command("sms-code", sms.credentials());
@@ -459,30 +496,36 @@ int main(int, char **) {
                             }
                         }
                     }
-                    lastHeld = c.held;
                     wasStreaming = state.streaming;
                     color(renderer, {13, 19, 25, 255});
                     SDL_RenderClear(renderer);
                     if (state.streaming) {
-                        auto p = media->picture(serial);
-                        if (p.serial) {
-                            if (p.width != texW || p.height != texH) {
-                                if (video)
-                                    SDL_DestroyTexture(video);
-                                video = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32,
-                                                          SDL_TEXTUREACCESS_STREAMING, p.width, p.height);
-                                texW = p.width;
-                                texH = p.height;
+                        if (const auto picture = media->picture(serial)) {
+                            const int width = picture->width, height = picture->height;
+                            VideoTexture replacement(nullptr, SDL_DestroyTexture);
+                            auto *target = video.get();
+                            if (!video || width != texW || height != texH) {
+                                replacement.reset(SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32,
+                                                                    SDL_TEXTUREACCESS_STREAMING, width,
+                                                                    height));
+                                target = replacement.get();
                             }
-                            if (video)
-                                SDL_UpdateTexture(video, nullptr, p.pixels.data(), p.width * 4);
-                            serial = p.serial;
-                            float scale = std::min(1280.f / p.width, 720.f / p.height);
-                            viewport = {int((1280 - p.width * scale) / 2), int((720 - p.height * scale) / 2),
-                                        int(p.width * scale), int(p.height * scale)};
+                            if (target && SDL_UpdateTexture(target, nullptr, picture->pixels.data(),
+                                                            width * 4) == 0) {
+                                if (replacement) {
+                                    video = std::move(replacement);
+                                    texW = width;
+                                    texH = height;
+                                    const float scale = std::min(1280.f / width, 720.f / height);
+                                    viewport = {int((1280 - width * scale) / 2),
+                                                int((720 - height * scale) / 2), int(width * scale),
+                                                int(height * scale)};
+                                }
+                                serial = picture->serial;
+                            }
                         }
                         if (video)
-                            SDL_RenderCopy(renderer, video, nullptr, &viewport);
+                            SDL_RenderCopy(renderer, video.get(), nullptr, &viewport);
                         else
                             text(renderer, fonts.normal, "等待电脑发送画面…", 470, 330, muted);
                         int x = viewport.x + int(cursorX * viewport.w),
@@ -619,8 +662,6 @@ int main(int, char **) {
                     }
                     SDL_RenderPresent(renderer);
                 }
-                if (video)
-                    SDL_DestroyTexture(video);
             }
             rtc::Cleanup().wait();
             uu::waitBackgroundTasks();
