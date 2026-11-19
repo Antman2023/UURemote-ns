@@ -8,7 +8,7 @@
 ![Status](https://img.shields.io/badge/status-experimental-d99a36)
 [![License](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](LICENSE)
 
-[**下载 v0.1.8 实验版**](https://github.com/Antman2023/UURemote-ns/releases/tag/v0.1.8) · [安装使用](#安装使用) · [按键操作](#按键操作) · [源码构建](#源码构建) · [开发记录](docs/development.md)
+[**下载最新版**](https://github.com/Antman2023/UURemote-ns/releases/latest) · [安装使用](#安装使用) · [按键操作](#按键操作) · [源码构建](#源码构建) · [开发记录](docs/development.md)
 
 > **当前为实验版，串流仍需 Switch 真机联调。**
 > v0.1.8 修复中文缺字、二维码登录和 Eden 中的 WebRTC 连接，并为 Eden 提供 H.264 软件解码选项。已在 Eden 验证扫码连接、音频播放、WebRTC 回环及合成画面显示。Switch 真机串流仍待复测。
@@ -145,7 +145,7 @@ python3 scripts/package.py
 
 推送到 `main` 或在 `main` 手动运行 **Build Switch** 时，Actions 使用锁定的 Windows 工具链生成 NRO、SD 卡安装包和 `SHA256SUMS`。构建完成后，在对应运行的 **Artifacts** 中下载。提交到 `main` 的 Pull Request 会编译 ARM64 ELF，供合并前检查。
 
-推送 `vX.Y.Z` 标签会触发同一构建，并在校验产物后创建 GitHub 预发布。与 `main` 一起推送并指向同一提交的版本标签也会发布。标签必须指向 `main` 上的提交，版本须与 `CMakeLists.txt` 中的 `project` 版本一致。发布页会附带 NRO、SD 卡安装包和 `SHA256SUMS`，并自动生成变更说明。
+推送 `vX.Y.Z` 标签会触发同一构建，并在校验产物后创建 GitHub Release，默认标记为 **Latest**。与 `main` 一起推送并指向同一提交的版本标签也会发布。标签必须指向 `main` 上的提交，版本须与 `CMakeLists.txt` 中的 `project` 版本一致。发布页会附带 NRO、SD 卡安装包和 `SHA256SUMS`，并自动生成变更说明。
 
 补发已有标签时，在 `main` 上手动运行 **Build Switch**，将 `release_tag` 设为要发布的标签。Actions 编译该标签的源码，并按当前工作流的打包规则生成 ZIP。
 

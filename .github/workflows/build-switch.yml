@@ -140,7 +140,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Publish Switch prerelease
+    name: Publish Switch release
     if: needs.switch.outputs.release_tag != ''
     needs: switch
     concurrency:
@@ -176,14 +176,14 @@ jobs:
           title="UU Remote NS $RELEASE_TAG"
           if release=$(gh release view "$RELEASE_TAG" --json name,isDraft,isPrerelease,assets,url); then
             if jq -e '.isDraft == false' <<< "$release" >/dev/null; then
-              jq -e --arg zip "$zip" '.isPrerelease and (([.assets[].name] | sort) == (["UURemote-ns.nro", $zip, "SHA256SUMS"] | sort))' <<< "$release" >/dev/null
+              jq -e --arg zip "$zip" '(.isPrerelease == false) and (([.assets[].name] | sort) == (["UURemote-ns.nro", $zip, "SHA256SUMS"] | sort))' <<< "$release" >/dev/null
               jq -r '.url' <<< "$release"
               exit 0
             fi
-            jq -e --arg title "$title" '.isPrerelease and .name == $title' <<< "$release" >/dev/null
+            jq -e --arg title "$title" '.name == $title' <<< "$release" >/dev/null
             gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
-            gh release edit "$RELEASE_TAG" --draft=false
+            gh release edit "$RELEASE_TAG" --draft=false --prerelease=false --latest
           else
             gh release create "$RELEASE_TAG" "${assets[@]}" \
-              --verify-tag --generate-notes --prerelease --title "$title"
+              --verify-tag --generate-notes --latest --title "$title"
           fi
