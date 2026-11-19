@@ -12,6 +12,29 @@ def replace(path, before, after):
 
 replace(Path('deps/libjuice/src/socket.h'), '#ifdef __ANDROID__\n#define NO_IFADDRS', '#if defined(__ANDROID__) || defined(__SWITCH__)\n#define NO_IFADDRS')
 replace(Path('deps/libjuice/src/random.c'), '#elif defined(_WIN32)', '#elif defined(__SWITCH__)\n#include <switch.h>\nstatic int random_bytes(void *buf, size_t size) { randomGet(buf, size); return 0; }\n#elif defined(_WIN32)')
+# Some socket services fail to preserve UDP hints in their resolver results.
+# The UDP transport already knows the required socket type and protocol.
+replace(Path('deps/libjuice/src/udp.c'),
+        '\tsocket_t sock = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);', '''#ifdef __SWITCH__
+\tsocket_t sock = socket(ai->ai_family, SOCK_DGRAM, IPPROTO_UDP);
+#else
+\tsocket_t sock = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+#endif''')
+# The default bind address is a local socket wildcard and needs no DNS service.
+replace(Path('deps/libjuice/src/udp.c'), 'socket_t udp_create_socket(const udp_socket_config_t *config) {', '''socket_t udp_create_socket(const udp_socket_config_t *config) {
+#ifdef __SWITCH__
+\tif (!config->bind_address) {
+\t\tstruct sockaddr_in address = {0};
+\t\taddress.sin_len = sizeof(address);
+\t\taddress.sin_family = AF_INET;
+\t\taddress.sin_addr.s_addr = htonl(INADDR_ANY);
+\t\tstruct addrinfo ai = {0};
+\t\tai.ai_family = AF_INET;
+\t\tai.ai_addr = (struct sockaddr *)&address;
+\t\tai.ai_addrlen = sizeof(address);
+\t\treturn create_socket_for_addrinfo(config, &ai);
+\t}
+#endif''')
 # Horizon exposes its single active interface via gethostid(), not SIOCGIFCONF.
 replace(Path('deps/libjuice/src/udp.c'), '#else // NO_IFADDRS defined\n', '''#elif defined(__SWITCH__)
     if (count > 0) {

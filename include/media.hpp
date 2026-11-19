@@ -19,7 +19,8 @@ class Media {
     std::unique_ptr<Impl> impl_;
 
   public:
-    Media();
+    enum class VideoDecoder { Automatic, Software };
+    explicit Media(VideoDecoder videoDecoder = VideoDecoder::Automatic);
     ~Media();
     // Returns true when the receiver should request a fresh keyframe.
     bool video(const uint8_t *data, size_t size, uint64_t generation);

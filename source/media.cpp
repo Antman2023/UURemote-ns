@@ -42,7 +42,7 @@ struct Media::Impl {
     std::atomic<bool> decoderFailed{false};
     enum class AudioStatus { Ready, Unavailable, QueueFailed };
     std::atomic<AudioStatus> audioStatus{AudioStatus::Ready};
-    Impl() {
+    explicit Impl(VideoDecoder videoDecoder) {
         try {
             SDL_AudioSpec spec{};
             spec.freq = 48000;
@@ -58,9 +58,9 @@ struct Media::Impl {
                 throw std::runtime_error("Opus decoder initialization failed");
             if (audioDevice)
                 SDL_PauseAudioDevice(audioDevice, 0);
-            thread = std::thread([this] {
+            thread = std::thread([this, videoDecoder] {
                 try {
-                    decode();
+                    decode(videoDecoder);
                 } catch (...) {
                     decoderFailed = true;
                     diagnosticException("video-decode-exception", std::current_exception());
@@ -84,20 +84,15 @@ struct Media::Impl {
             SDL_CloseAudioDevice(audioDevice);
         opus_decoder_destroy(opus);
     }
-    static AVPixelFormat chooseFormat(AVCodecContext *context, const AVPixelFormat *formats) {
 #ifdef __SWITCH__
+    static AVPixelFormat chooseFormat(AVCodecContext *context, const AVPixelFormat *formats) {
         for (auto p = formats; *p != AV_PIX_FMT_NONE; ++p)
-            if (context->hw_device_ctx && *p == AV_PIX_FMT_NVTEGRA)
+            if (*p == AV_PIX_FMT_NVTEGRA)
                 return *p;
-#else
-        (void)context;
-#endif
-        for (auto p = formats; *p != AV_PIX_FMT_NONE; ++p)
-            if (*p == AV_PIX_FMT_YUV420P || *p == AV_PIX_FMT_NV12)
-                return *p;
-        return formats[0];
+        return avcodec_default_get_format(context, formats);
     }
-    void decode() {
+#endif
+    void decode(VideoDecoder videoDecoder) {
         const auto *codec = avcodec_find_decoder(AV_CODEC_ID_H264);
         DecoderResources resources;
         auto *ctx = resources.context = avcodec_alloc_context3(codec);
@@ -114,11 +109,16 @@ struct Media::Impl {
         ctx->thread_count = 2;
         ctx->flags |= AV_CODEC_FLAG_LOW_DELAY;
 #ifdef __SWITCH__
-        ctx->get_format = chooseFormat;
-        if (av_hwdevice_ctx_create(&ctx->hw_device_ctx, AV_HWDEVICE_TYPE_NVTEGRA, nullptr, nullptr, 0) < 0) {
-            std::lock_guard lock(mutex);
-            error = "NVDEC 不可用，使用软件解码";
+        if (videoDecoder == VideoDecoder::Automatic) {
+            if (av_hwdevice_ctx_create(&ctx->hw_device_ctx, AV_HWDEVICE_TYPE_NVTEGRA, nullptr, nullptr, 0) >= 0) {
+                ctx->get_format = chooseFormat;
+            } else {
+                std::lock_guard lock(mutex);
+                error = "NVDEC 不可用，使用软件解码";
+            }
         }
+#else
+        (void)videoDecoder;
 #endif
         if (avcodec_open2(ctx, codec, nullptr) < 0) {
             std::lock_guard lock(mutex);
@@ -182,8 +182,8 @@ struct Media::Impl {
                         picture->width = width;
                         picture->height = height;
                         picture->pixels.resize(size_t(width) * height * 4);
-                        uint8_t *dst[] = {picture->pixels.data()};
-                        int stride[] = {width * 4};
+                        uint8_t *dst[4] = {picture->pixels.data()};
+                        int stride[4] = {width * 4};
                         if (sws_scale(sws, source->data, source->linesize, 0, height, dst, stride) == height) {
                             std::lock_guard lock(mutex);
                             // An overflow may invalidate an in-flight frame while it is being converted.
@@ -208,7 +208,7 @@ struct Media::Impl {
         }
     }
 };
-Media::Media() : impl_(std::make_unique<Impl>()) {}
+Media::Media(VideoDecoder videoDecoder) : impl_(std::make_unique<Impl>(videoDecoder)) {}
 Media::~Media() = default;
 bool Media::video(const uint8_t *data, size_t size, uint64_t generation) {
     if (!size || size > 2 * 1024 * 1024 || impl_->decoderFailed.load())

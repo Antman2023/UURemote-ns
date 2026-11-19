@@ -5,6 +5,7 @@
 #include "qrcodegen.hpp"
 #include "rtc_diagnostics.hpp"
 #include <SDL_ttf.h>
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cmath>
@@ -14,6 +15,7 @@
 #include <iterator>
 #include <memory>
 #include <optional>
+#include <string_view>
 #include <sys/stat.h>
 #include <utility>
 #ifdef __SWITCH__
@@ -101,10 +103,19 @@ struct Fonts {
     Fonts() {
 #ifdef __SWITCH__
         PlFontData data{};
-        if (R_FAILED(plGetSharedFontByType(&data, PlSharedFontType_ChineseSimplified)))
-            throw std::runtime_error("Cannot load system font");
+        const bool hasSystemFont = R_SUCCEEDED(plGetSharedFontByType(&data, PlSharedFontType_ChineseSimplified));
         auto load = [&](int size) {
-            return TTF_OpenFontRW(SDL_RWFromConstMem(data.address, int(data.size)), 1, size);
+            if (hasSystemFont) {
+                if (auto *font = TTF_OpenFontRW(SDL_RWFromConstMem(data.address, int(data.size)), 1, size)) {
+                    constexpr std::u32string_view required = U"远程登录扫码验证码设备连接退出确认鼠标控制网络";
+                    if (std::all_of(required.begin(), required.end(), [font](char32_t ch) {
+                            return TTF_GlyphIsProvided32(font, ch) != 0;
+                        }))
+                        return font;
+                    TTF_CloseFont(font);
+                }
+            }
+            return TTF_OpenFont("romfs:/fonts/uu-cjk-fallback.otf", size);
         };
 #else
         const char *env = std::getenv("UU_FONT");
@@ -200,7 +211,6 @@ int main(int, char **) {
     }
     socketInitializeDefault();
     nifmInitialize(NifmServiceType_User);
-    sslInitialize(0);
     romfsInit();
     plInitialize(PlServiceType_User);
     padConfigureInput(1, HidNpadStyleSet_NpadStandard);
@@ -234,9 +244,11 @@ int main(int, char **) {
             std::string key = read("romfs:/signing.key");
             const std::string profile = "sdmc:/switch/UURemote-ns/client-id";
             mkdir("sdmc:/switch/UURemote-ns", 0777);
+            const bool softwareVideo = std::ifstream("sdmc:/switch/UURemote-ns/software-video").is_open();
 #else
             std::string key = read("romfs/signing.key");
             const std::string profile = "client-id";
+            const bool softwareVideo = true;
 #endif
             if (key.size() != 24)
                 throw std::runtime_error("Missing signing.key: run scripts/extract_key.py and rebuild");
@@ -252,7 +264,9 @@ int main(int, char **) {
                 id = uu::uuid();
                 std::ofstream(profile) << id;
             }
-            auto media = std::make_shared<uu::Media>();
+            uu::diagnostic(softwareVideo ? "video-decoder-software" : "video-decoder-automatic");
+            auto media = std::make_shared<uu::Media>(softwareVideo ? uu::Media::VideoDecoder::Software
+                                                                  : uu::Media::VideoDecoder::Automatic);
             {
                 uu::Client client(key, id, media);
 #ifdef __SWITCH__
@@ -521,6 +535,8 @@ int main(int, char **) {
                                                 int((720 - height * scale) / 2), int(width * scale),
                                                 int(height * scale)};
                                 }
+                                if (!serial)
+                                    uu::diagnostic("video-first-texture-uploaded");
                                 serial = picture->serial;
                             }
                         }
@@ -700,7 +716,6 @@ int main(int, char **) {
     appletSetMediaPlaybackState(false);
     plExit();
     romfsExit();
-    sslExit();
     nifmExit();
     socketExit();
 #endif

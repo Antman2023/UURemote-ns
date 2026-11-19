@@ -16,6 +16,8 @@ Application code is licensed under GPL-3.0-or-later; see LICENSE. Linked depende
 | QR Code generator | https://github.com/nayuki/QR-Code-generator | MIT |
 | Opus | https://opus-codec.org | BSD-3-Clause |
 | libcurl | https://curl.se | curl license |
+| Mozilla CA bundle (2026-11-05) | https://curl.se/docs/caextract.html | MPL-2.0 |
+| UU Remote CJK fallback, a GB2312 subset of Noto Sans CJK SC 2.004 | https://github.com/notofonts/noto-cjk/releases/tag/Sans2.004 | SIL OFL-1.1 |
 | FreeType / HarfBuzz | https://freetype.org / https://harfbuzz.github.io | FTL or GPL / MIT |
 | Mesa / libdrm | https://www.mesa3d.org / https://gitlab.freedesktop.org/mesa/drm | MIT and notices in source |
 | dav1d / libpng / zlib / bzip2 | devkitPro portlibs package sources | BSD-2-Clause / libpng / Zlib / bzip2 license |

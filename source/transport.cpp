@@ -1,8 +1,10 @@
 #include "transport.hpp"
 #include "auth.hpp"
+#include "diagnostics.hpp"
 #include <chrono>
 #include <mbedtls/sha1.h>
 #include <stdexcept>
+#include <string_view>
 #include <thread>
 
 namespace uu {
@@ -37,7 +39,10 @@ void common(CURL *c, std::atomic<bool> &cancel, int timeout) {
     curl_easy_setopt(c, CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(c, CURLOPT_SSL_VERIFYPEER, 1L);
     curl_easy_setopt(c, CURLOPT_SSL_VERIFYHOST, 2L);
-#if defined(_WIN32) && defined(CURLSSLOPT_NATIVE_CA)
+#ifdef __SWITCH__
+    if (curl_easy_setopt(c, CURLOPT_CAINFO, "romfs:/ca-bundle.pem") != CURLE_OK)
+        throw std::runtime_error("Cannot configure Switch certificate trust");
+#elif defined(_WIN32) && defined(CURLSSLOPT_NATIVE_CA)
     // A relocated MinGW curl may point at an absent build-time CA bundle.
     // Use Windows trust roots while retaining chain and hostname verification.
     if (curl_easy_setopt(c, CURLOPT_SSL_OPTIONS, long(CURLSSLOPT_NATIVE_CA)) != CURLE_OK)
@@ -78,10 +83,29 @@ Json Api::request(const std::string &method, const std::string &path, const Json
     curl_easy_setopt(c.handle, CURLOPT_WRITEDATA, &response);
     curl_easy_setopt(c.handle, CURLOPT_ERRORBUFFER, error);
     auto code = curl_easy_perform(c.handle);
-    if (code != CURLE_OK)
+    if (code != CURLE_OK) {
+        if (!cancel_) {
+            diagnostic(("api-curl-code-" + std::to_string(int(code))).c_str());
+#ifdef __SWITCH__
+            if (code == CURLE_PEER_FAILED_VERIFICATION) {
+                const std::string_view reason(error);
+                if (reason.find("validity starts in the future") != std::string_view::npos)
+                    diagnostic("api-tls-certificate-in-future");
+                else if (reason.find("validity has expired") != std::string_view::npos)
+                    diagnostic("api-tls-certificate-expired");
+                else if (reason.find("does not match with the expected CN") != std::string_view::npos)
+                    diagnostic("api-tls-hostname-mismatch");
+                else if (reason.find("not correctly signed by the trusted CA") != std::string_view::npos)
+                    diagnostic("api-tls-untrusted-certificate");
+                else if (reason.find("unacceptable") != std::string_view::npos)
+                    diagnostic("api-tls-certificate-profile");
+            }
+#endif
+        }
         throw std::runtime_error(cancel_ ? "Canceled"
                                          : std::string("HTTPS: ") + curl_easy_strerror(code) + " (" +
                                                std::to_string(code) + ")");
+    }
     long status = 0;
     curl_easy_getinfo(c.handle, CURLINFO_RESPONSE_CODE, &status);
     if (status == 204 || status == 205)

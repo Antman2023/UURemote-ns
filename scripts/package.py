@@ -28,6 +28,8 @@ notices = {
     'json-MIT.txt':'external/json/LICENSE.MIT',
     'qrcodegen-MIT.txt':'external/qrcodegen/Readme.markdown',
     'mbedtls-Apache-2.0.txt':'external/mbedtls/LICENSE',
+    'curl.txt':'external/curl/COPYING',
+    'NotoSansCJK-OFL.txt':'romfs/fonts/OFL-NotoSansCJK.txt',
 }
 notice_dir = ROOT/'dist/licenses'
 notice_dir.mkdir(parents=True, exist_ok=True)

@@ -62,6 +62,8 @@ SD 卡根目录/
 
 也可下载 [单独的 NRO](https://github.com/Antman2023/UURemote-ns/releases/download/v0.1.7/UURemote-ns.nro)，手动放到上述目录。[SHA256SUMS](https://github.com/Antman2023/UURemote-ns/releases/download/v0.1.7/SHA256SUMS) 用于校验 NRO 和安装包。
 
+使用新版 NRO 在 Eden 中测试时，可以在模拟 SD 卡的 `switch/UURemote-ns/` 下创建空文件 `software-video`（无扩展名）并重启客户端。此模式使用软件解码，适用于 NVDEC 模拟出现绿屏、花屏或无画面的情况。移除该文件后恢复自动选择。
+
 账号令牌、手机号和验证码只保存在内存，重启程序后需要重新登录。SD 卡保存随机生成的主控 `client-id` 和连接阶段日志 `connection.log`，包含 ICE / 信令状态、DTLS / SCTP 握手阶段及允许记录的数值错误码；异常终止时还记录异常类型和代码偏移。不记录原始库日志、网络地址、手机号、验证码、令牌、二维码内容、SDP 或数据通道消息。连接时不会强制抢占已有远控会话。
 
 ## 按键操作
@@ -115,7 +117,7 @@ python scripts/bootstrap_sdk.py
 
 ### Linux / macOS
 
-在已有 devkitPro 环境中安装 `switch-dev`、`switch-sdl2`、`switch-sdl2_ttf`、`switch-curl`、`switch-ffmpeg` 和 `switch-libopus`，其余 portlibs 由包依赖带入。然后执行：
+在已有 devkitPro 环境中安装 `switch-dev`、`switch-sdl2`、`switch-sdl2_ttf`、`switch-ffmpeg` 和 `switch-libopus`，其余 portlibs 由包依赖带入。然后执行：
 
 ```sh
 export DEVKITPRO=/opt/devkitpro
@@ -180,7 +182,7 @@ flowchart LR
     Switch <-->|WebRTC 音视频与键鼠输入| PC[原版 UU远程电脑端]
 ```
 
-客户端使用 libcurl 处理 HTTPS / TLS WebSocket，libdatachannel 及其依赖处理 WebRTC，FFmpeg / Opus 负责解码，SDL2 负责显示与音频输出。中文使用系统共享字体。协议移植参考 `UURemote-web`，保留其已验证的请求签名、连接参数及信令封装。
+客户端使用 libcurl 处理 HTTPS / TLS WebSocket，Switch 版使用应用内的 Mbed TLS 和 Mozilla CA 根证书包。libdatachannel 及其依赖处理 WebRTC，FFmpeg / Opus 负责解码，SDL2 负责显示与音频输出。系统共享字体缺字时使用内置的简体中文备用字体。协议移植参考 `UURemote-web`，保留其已验证的请求签名、连接参数及信令封装。
 
 实现细节、源码位置与真机检查步骤见 [开发记录](docs/development.md)。
 

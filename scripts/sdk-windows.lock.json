@@ -72,12 +72,6 @@
     "sha256": "7eee6a98312991faac73246f93d88740fb234d90ac5bd19ca969d6e227a59c8f"
   },
   {
-    "name": "switch-curl",
-    "version": "7.69.1-5",
-    "url": "https://pkg.devkitpro.org/packages/switch-curl-7.69.1-5-any.pkg.tar.zst?x=1",
-    "sha256": "062f683cc9925e6c27e38a9dc9c97fabe17a9eae6002c355000f5cff5886c81e"
-  },
-  {
     "name": "switch-dav1d",
     "version": "1.5.0-1",
     "url": "https://pkg.devkitpro.org/packages/switch-dav1d-1.5.0-1-any.pkg.tar.zst?x=1",
