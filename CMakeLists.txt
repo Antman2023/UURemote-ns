@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(UURemote-ns VERSION 0.1.8 LANGUAGES C CXX)
+project(UURemote-ns VERSION 0.1.9 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_C_STANDARD 11)
@@ -130,6 +130,7 @@ if(UU_SWITCH)
         COMMAND "${DEVKITPRO}/tools/bin/elf2nro" "$<TARGET_FILE:UURemote-ns>" "${CMAKE_BINARY_DIR}/UURemote-ns.nro" "--nacp=${CMAKE_BINARY_DIR}/UURemote-ns.nacp" "--icon=${DEVKITPRO}/libnx/default_icon.jpg" "--romfsdir=${CMAKE_SOURCE_DIR}/romfs"
         DEPENDS UURemote-ns "${CMAKE_SOURCE_DIR}/romfs/signing.key" "${CMAKE_SOURCE_DIR}/romfs/ca-bundle.pem"
             "${CMAKE_SOURCE_DIR}/romfs/fonts/uu-cjk-fallback.otf"
+            "${CMAKE_SOURCE_DIR}/romfs/ui/button-prompts.bmp"
             "${CMAKE_SOURCE_DIR}/romfs/fonts/OFL-NotoSansCJK.txt" VERBATIM)
     add_custom_target(nro ALL DEPENDS "${CMAKE_BINARY_DIR}/UURemote-ns.nro")
 else()

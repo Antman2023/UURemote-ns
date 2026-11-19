@@ -187,7 +187,7 @@ void Client::handle(const Event &event) {
             std::lock_guard lock(stateMutex_);
             state_.loginMode = "qr";
         }
-        setState("idle", "已断开，按 Y 刷新设备或按 A 登录");
+        setState("idle", "已断开，可以刷新设备或重新登录");
     } else if (e == "logout") {
         disconnect();
         cancel_ = false;
@@ -197,14 +197,14 @@ void Client::handle(const Event &event) {
             state_.devices = Json::array();
             state_.nickname.clear();
         }
-        setState("idle", "已退出账号，按 A 重新扫码");
+        setState("idle", "已退出账号，可以重新扫码");
     } else if (e == "refresh") {
         if (api_->authenticated()) {
             cancel_ = false;
             setState("loading", "正在同步设备…");
             refresh();
         } else
-            setState("idle", "请先按 A 扫码登录");
+            setState("idle", "请先扫码登录");
     } else if (e == "connect") {
         disconnect();
         cancel_ = false;
@@ -273,7 +273,7 @@ void Client::pollQr() {
             std::lock_guard lock(stateMutex_);
             state_.qrUrl.clear();
         }
-        setState("idle", "二维码已过期，按 A 重新生成");
+        setState("idle", "二维码已过期，请重新获取");
         return;
     }
     Json data = qr_;
@@ -286,7 +286,7 @@ void Client::pollQr() {
         completeLogin(login);
     } else if (qrStatus_ == 3) {
         qr_ = nullptr;
-        setState("idle", "手机已取消登录，按 A 重试");
+        setState("idle", "手机已取消登录，可以重新扫码");
     } else if (qrStatus_ == 2)
         setState("login", "扫码成功，请在手机上确认登录");
 }
@@ -323,7 +323,7 @@ void Client::refresh() {
         state_.devices = std::move(devices);
     }
     setState("idle", empty ? "暂无电脑，请在原版 UU 电脑端登录同一账号"
-                           : "选择电脑，按 A 连接 · Y 刷新 · X 退出账号");
+                           : "选择在线电脑连接");
 }
 void Client::emit(const std::string &name, const Json &data, const std::string &ack,
                   const Bytes &attachment) {
@@ -531,7 +531,7 @@ void Client::updateConnectionReadiness() {
         return;
     }
     deadline_ = 0;
-    setState("connected", "已连接 · 左摇杆移动鼠标 · ZR/ZL 点击 · − 断开");
+    setState("connected", "已连接");
 }
 void Client::handleSoac(const Json &packet) {
     if (!packet.contains("data") || !packet["data"].is_object())

@@ -3,6 +3,7 @@
 #include "controller_input.hpp"
 #include "diagnostics.hpp"
 #include "qrcodegen.hpp"
+#include "remote_keyboard.hpp"
 #include "rtc_diagnostics.hpp"
 #include <SDL_ttf.h>
 #include <algorithm>
@@ -11,13 +12,17 @@
 #include <cmath>
 #include <exception>
 #include <fstream>
+#include <initializer_list>
 #include <iostream>
 #include <iterator>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string_view>
 #include <sys/stat.h>
+#include <tuple>
 #include <utility>
+#include <vector>
 #ifdef __SWITCH__
 #include <switch.h>
 #endif
@@ -53,6 +58,110 @@ void text(SDL_Renderer *r, TTF_Font *f, const std::string &s, int x, int y, SDL_
     SDL_DestroyTexture(t);
     SDL_FreeSurface(surface);
 }
+struct CachedLabel {
+    std::unique_ptr<SDL_Texture, decltype(&SDL_DestroyTexture)> texture{nullptr, SDL_DestroyTexture};
+    int width = 0, height = 0;
+
+    CachedLabel(SDL_Renderer *renderer, TTF_Font *font, const char *label, SDL_Color tint) {
+        std::unique_ptr<SDL_Surface, decltype(&SDL_FreeSurface)> surface(TTF_RenderUTF8_Blended(font, label, tint),
+                                                                      SDL_FreeSurface);
+        if (!surface)
+            return;
+        texture.reset(SDL_CreateTextureFromSurface(renderer, surface.get()));
+        width = surface->w;
+        height = surface->h;
+    }
+
+    void draw(SDL_Renderer *renderer, int x, int y) const {
+        if (texture) {
+            const SDL_Rect position{x, y, width, height};
+            SDL_RenderCopy(renderer, texture.get(), nullptr, &position);
+        }
+    }
+};
+enum class ButtonIcon {
+    A, B, X, Y, L, R, ZL, ZR, Plus, Minus, Dpad, UpDown, LeftStick, RightStick, RightClick,
+    Enter, Esc, F1, F2, F3, F10, Count
+};
+struct ButtonHint {
+    ButtonIcon icon;
+    const char *label;
+    ButtonIcon second = ButtonIcon::Count;
+};
+class ButtonPrompts {
+    static constexpr int cellWidth = 64, cellHeight = 52, displayWidth = 40;
+    std::unique_ptr<SDL_Texture, decltype(&SDL_DestroyTexture)> atlas_{nullptr, SDL_DestroyTexture};
+    std::map<std::tuple<TTF_Font *, std::string_view, Uint32>, CachedLabel> captions_;
+
+  public:
+    explicit ButtonPrompts(SDL_Renderer *renderer) {
+#ifdef __SWITCH__
+        const char *path = "romfs:/ui/button-prompts.bmp";
+#else
+        const char *path = "romfs/ui/button-prompts.bmp";
+#endif
+        std::unique_ptr<SDL_Surface, decltype(&SDL_FreeSurface)> surface(SDL_LoadBMP(path), SDL_FreeSurface);
+        if (!surface || surface->w != cellWidth * int(ButtonIcon::Count) || surface->h != cellHeight)
+            throw std::runtime_error("Unable to load the button prompt images");
+        SDL_SetColorKey(surface.get(), SDL_TRUE, SDL_MapRGB(surface->format, 0, 0, 0));
+        atlas_.reset(SDL_CreateTextureFromSurface(renderer, surface.get()));
+        if (!atlas_)
+            throw std::runtime_error(SDL_GetError());
+    }
+
+    void draw(SDL_Renderer *renderer, TTF_Font *font, int x, int y, std::initializer_list<ButtonHint> hints,
+              SDL_Color tint = muted) {
+        const auto image = [&](ButtonIcon icon) {
+            const SDL_Rect source{cellWidth * int(icon), 0, cellWidth, cellHeight}, target{x, y, displayWidth, 32};
+            SDL_RenderCopy(renderer, atlas_.get(), &source, &target);
+            x += displayWidth;
+        };
+        for (const auto &hint : hints) {
+            image(hint.icon);
+            if (hint.second != ButtonIcon::Count)
+                image(hint.second);
+            const auto rgba = (Uint32(tint.r) << 24) | (Uint32(tint.g) << 16) | (Uint32(tint.b) << 8) | tint.a;
+            const auto key = std::make_tuple(font, std::string_view(hint.label), rgba);
+            const auto &caption = captions_.try_emplace(key, renderer, font, hint.label, tint).first->second;
+            caption.draw(renderer, x + 3, y + (32 - caption.height) / 2);
+            x += caption.width + 21;
+        }
+    }
+};
+#ifdef __SWITCH__
+constexpr auto confirmIcon = ButtonIcon::A, backIcon = ButtonIcon::B, exitIcon = ButtonIcon::Plus;
+#else
+constexpr auto confirmIcon = ButtonIcon::Enter, backIcon = ButtonIcon::Esc, exitIcon = ButtonIcon::F10;
+#endif
+
+class KeyboardLabels {
+    std::vector<CachedLabel> labels_;
+
+  public:
+    void draw(SDL_Renderer *renderer, TTF_Font *font, const uu::RemoteKeyboard &keyboard) {
+        using Layout = uu::RemoteKeyboard;
+        if (labels_.empty()) {
+            for (const auto &row : Layout::rows)
+                for (int column = 0; column < row.count; ++column)
+                    labels_.emplace_back(renderer, font, row.keys[column].label, white);
+        }
+        std::size_t index = 0;
+        for (int row = 0; row < int(std::size(Layout::rows)); ++row)
+            for (int column = 0; column < Layout::rows[row].count; ++column) {
+                const auto box = Layout::bounds(row, column);
+                const bool active = keyboard.armed(Layout::rows[row].keys[column].code);
+                rect(renderer, box.x, box.y, box.width, box.height,
+                     active ? SDL_Color{43, 86, 74, 255} : SDL_Color{31, 45, 55, 255});
+                if (keyboard.selected(row, column)) {
+                    color(renderer, accent);
+                    const SDL_Rect outline{box.x, box.y, box.width, box.height};
+                    SDL_RenderDrawRect(renderer, &outline);
+                }
+                const auto &label = labels_[index++];
+                label.draw(renderer, box.x + (box.width - label.width) / 2, box.y + (box.height - label.height) / 2);
+            }
+    }
+};
 void statusText(SDL_Renderer *renderer, TTF_Font *font, const std::string &message, SDL_Color tint) {
     auto *surface = TTF_RenderUTF8_Blended_Wrapped(font, message.substr(0, 512).c_str(), tint, 1110);
     if (!surface)
@@ -107,7 +216,7 @@ struct Fonts {
         auto load = [&](int size) {
             if (hasSystemFont) {
                 if (auto *font = TTF_OpenFontRW(SDL_RWFromConstMem(data.address, int(data.size)), 1, size)) {
-                    constexpr std::u32string_view required = U"远程登录扫码验证码设备连接退出确认鼠标控制网络";
+                    constexpr std::u32string_view required = U"远程登录扫码验证码设备连接退出确认鼠标控制网络键盘退格空格↑↓←→";
                     if (std::all_of(required.begin(), required.end(), [font](char32_t ch) {
                             return TTF_GlyphIsProvided32(font, ch) != 0;
                         }))
@@ -140,9 +249,10 @@ std::string read(const std::string &path) {
 }
 struct Controls {
     bool confirm = false, back = false, refresh = false, logout = false, up = false, down = false,
-         help = false, disconnect = false, exit = false;
+         left = false, right = false, help = false, keyboard = false, disconnect = false, exit = false;
     float mx = 0, my = 0, scroll = 0;
     uint64_t held = 0;
+    std::optional<std::pair<int, int>> tap;
 };
 #ifdef __SWITCH__
 constexpr std::pair<uint64_t, int> controllerKeys[] = {
@@ -269,6 +379,9 @@ int main(int, char **) {
                                                                   : uu::Media::VideoDecoder::Automatic);
             {
                 uu::Client client(key, id, media);
+                ButtonPrompts prompts(renderer);
+                KeyboardLabels keyboardLabels;
+                uu::RemoteKeyboard keyboard;
 #ifdef __SWITCH__
                 FocusHook focusHook(client);
                 uu::ControllerInput controllerInput;
@@ -277,7 +390,7 @@ int main(int, char **) {
                 bool focused = (SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS) != 0;
                 Uint32 heldMouse = 0;
 #endif
-                bool running = true, overlay = true, wasStreaming = false;
+                bool running = true, overlay = true, wasStreaming = false, keyboardOpen = false;
                 int selected = 0, texW = 0, texH = 0;
                 uint64_t serial = 0;
                 float cursorX = .5f, cursorY = .5f, focusY = 230;
@@ -342,11 +455,19 @@ int main(int, char **) {
                             c.logout |= k == SDLK_x;
                             c.up |= k == SDLK_UP;
                             c.down |= k == SDLK_DOWN;
+                            c.left |= k == SDLK_LEFT;
+                            c.right |= k == SDLK_RIGHT;
                             c.help |= k == SDLK_F1;
                             c.disconnect |= k == SDLK_F2;
+                            c.keyboard |= k == SDLK_F3;
                             c.exit |= k == SDLK_F10;
                         }
 #ifndef __SWITCH__
+                        if (state.streaming && (keyboardOpen || c.keyboard)) {
+                            if (event.type == SDL_MOUSEBUTTONDOWN && event.button.button == SDL_BUTTON_LEFT)
+                                c.tap = std::make_pair(event.button.x, event.button.y);
+                            continue;
+                        }
                         if (state.streaming && event.type == SDL_MOUSEMOTION &&
                             inputArea.contains(event.motion.x, event.motion.y))
                             movePointer(inputArea.position(event.motion.x, event.motion.y));
@@ -378,8 +499,11 @@ int main(int, char **) {
                     c.logout |= pressed & HidNpadButton_X;
                     c.up |= pressed & HidNpadButton_Up;
                     c.down |= pressed & HidNpadButton_Down;
+                    c.left |= pressed & HidNpadButton_Left;
+                    c.right |= pressed & HidNpadButton_Right;
                     c.help |= pressed & HidNpadButton_Plus;
                     c.disconnect |= pressed & HidNpadButton_Minus;
+                    c.keyboard |= pressed & HidNpadButton_StickR;
                     c.exit |= !state.streaming && (pressed & HidNpadButton_Plus);
                     auto stick = padGetStickPos(&pad, 0), right = padGetStickPos(&pad, 1);
                     auto axis = [](int v) {
@@ -394,6 +518,10 @@ int main(int, char **) {
                                 state.stage != "sms";
                     if (c.exit || !running)
                         break;
+                    if (keyboardOpen && (!state.streaming || !focused)) {
+                        keyboardOpen = false;
+                        keyboard = {};
+                    }
                     if (state.streaming) {
                         if (c.help)
                             overlay = !overlay;
@@ -401,8 +529,30 @@ int main(int, char **) {
                             client.command("disconnect");
                             continue;
                         }
+                        if (focused && (c.keyboard || (keyboardOpen && c.back))) {
+                            keyboardOpen = !keyboardOpen;
+                            keyboard = {};
+                            client.command("release");
 #ifdef __SWITCH__
-                        if (focused) {
+                            controllerInput.reset();
+#else
+                            heldMouse = 0;
+#endif
+                        } else if (keyboardOpen && focused) {
+#ifdef __SWITCH__
+                            const auto touch = sampleController(controllerInput, 0, {0, 0, 1280, 720});
+                            if (touch.leftChanged && touch.left && touch.touchMove)
+                                c.tap = std::make_pair(int(std::lround(touch.touchMove->x * 1280)),
+                                                       int(std::lround(touch.touchMove->y * 720)));
+#endif
+                            keyboard.move(int(c.right) - int(c.left), int(c.down) - int(c.up));
+                            const bool tapped = c.tap && keyboard.selectAt(c.tap->first, c.tap->second);
+                            if (c.confirm || tapped)
+                                keyboard.press([&](int key, bool down) {
+                                    send({{"action", down ? "kbd_press" : "kbd_release"}, {"key", key}});
+                                });
+                        } else if (focused) {
+#ifdef __SWITCH__
                             const auto input = sampleController(controllerInput, c.held, inputArea);
                             if (input.leftChanged && !input.left)
                                 send({{"action", "mouse_release"}, {"button", 1}});
@@ -430,17 +580,17 @@ int main(int, char **) {
                             if (input.changed & HidNpadButton_ZL)
                                 send({{"action", (input.held & HidNpadButton_ZL) ? "mouse_press" : "mouse_release"},
                                       {"button", 2}});
-                        }
 #else
-                        if (c.confirm) {
-                            send({{"action", "kbd_press"}, {"key", 13}});
-                            send({{"action", "kbd_release"}, {"key", 13}});
-                        }
-                        if (c.back) {
-                            send({{"action", "kbd_press"}, {"key", 27}});
-                            send({{"action", "kbd_release"}, {"key", 27}});
-                        }
+                            if (c.confirm) {
+                                send({{"action", "kbd_press"}, {"key", 13}});
+                                send({{"action", "kbd_release"}, {"key", 13}});
+                            }
+                            if (c.back) {
+                                send({{"action", "kbd_press"}, {"key", 27}});
+                                send({{"action", "kbd_release"}, {"key", 27}});
+                            }
 #endif
+                        }
                     } else {
                         if (wasStreaming) {
                             video.reset();
@@ -551,14 +701,36 @@ int main(int, char **) {
                         if (overlay) {
                             rect(renderer, 0, 0, 1280, 68, {13, 19, 25, 225});
                             text(renderer, fonts.normal, "UU远程", 28, 18);
-                            text(renderer, fonts.small,
-                                 "左摇杆 鼠标  ·  ZR/ZL 点击  ·  A 确认  ·  B Esc  ·  − 断开  ·  + 隐藏", 200,
-                                 24, muted);
                             rect(renderer, 0, 650, 1280, 70, {13, 19, 25, 225});
-                            text(renderer, fonts.small,
-                                 "方向键 WASD  ·  X 空格  ·  Y Tab  ·  L Ctrl  ·  R Shift  ·  右摇杆 滚轮",
-                                 28, 665, muted);
+#ifdef __SWITCH__
+                            prompts.draw(renderer, fonts.small, 190, 18,
+                                         {{ButtonIcon::LeftStick, "鼠标"}, {ButtonIcon::ZR, "点击", ButtonIcon::ZL},
+                                          {ButtonIcon::A, "确认"}, {ButtonIcon::B, "Esc"},
+                                          {ButtonIcon::Minus, "断开"}, {ButtonIcon::Plus, "隐藏"},
+                                          {ButtonIcon::RightClick, "键盘"}});
+                            prompts.draw(renderer, fonts.small, 26, 655,
+                                         {{ButtonIcon::Dpad, "WASD"}, {ButtonIcon::X, "空格"},
+                                          {ButtonIcon::Y, "Tab"}, {ButtonIcon::L, "Ctrl"},
+                                          {ButtonIcon::R, "Shift"}, {ButtonIcon::RightStick, "滚轮"}});
+#else
+                            prompts.draw(renderer, fonts.small, 190, 18,
+                                         {{ButtonIcon::F1, "隐藏"}, {ButtonIcon::F2, "断开"},
+                                          {ButtonIcon::F3, "键盘"}, {confirmIcon, "确认"}, {backIcon, "返回"}});
+#endif
                             text(renderer, fonts.small, media->status(), 28, 694, muted);
+                        }
+                        if (keyboardOpen) {
+                            rect(renderer, 90, 286, 1100, 402, {13, 19, 25, 248});
+                            text(renderer, fonts.normal, "远程键盘", 130, 304);
+#ifdef __SWITCH__
+                            constexpr auto keyboardIcon = ButtonIcon::RightClick;
+#else
+                            constexpr auto keyboardIcon = ButtonIcon::F3;
+#endif
+                            prompts.draw(renderer, fonts.small, 268, 302,
+                                         {{ButtonIcon::Dpad, "选键"}, {confirmIcon, "输入"},
+                                          {backIcon, "关闭", keyboardIcon}});
+                            keyboardLabels.draw(renderer, fonts.small, keyboard);
                         }
                     } else {
                         text(renderer, fonts.large, "UU远程", 62, 44);
@@ -602,14 +774,15 @@ int main(int, char **) {
                                  sms.selected == 3 ? SDL_Color{13, 19, 25, 255} : white);
                             text(renderer, fonts.normal, "登录", 686, 444,
                                  sms.selected == 4 ? SDL_Color{13, 19, 25, 255} : white);
-                            text(renderer, fonts.small, "↑ ↓ 选择项目   A 输入或确认   X 切换扫码登录", 80,
-                                 514, muted);
+                            prompts.draw(renderer, fonts.small, 80, 507,
+                                         {{ButtonIcon::UpDown, "选择项目"}, {confirmIcon, "输入或确认"},
+                                          {ButtonIcon::X, "切换扫码登录"}});
                         } else if (state.stage == "login") {
                             text(renderer, fonts.large, "扫码登录", 62, 208);
                             text(renderer, fonts.normal, "使用手机 UU远程 App", 62, 294, white, 550);
                             text(renderer, fonts.normal, "扫描右侧二维码并确认", 62, 336, white, 550);
-                            text(renderer, fonts.small, "X  短信验证码登录", 62, 432, accent);
-                            text(renderer, fonts.small, "B  取消 / 返回", 62, 476, muted);
+                            prompts.draw(renderer, fonts.small, 62, 426, {{ButtonIcon::X, "短信验证码登录"}}, accent);
+                            prompts.draw(renderer, fonts.small, 62, 470, {{backIcon, "取消 / 返回"}});
                             if (qr) {
                                 auto layout = uu::qrGeometry(qr->getSize());
                                 rect(renderer, layout.x, layout.y, layout.size, layout.size,
@@ -647,11 +820,11 @@ int main(int, char **) {
                                                          : "扫码或短信登录，同步远程电脑",
                                      62, 287, muted);
                                 rect(renderer, 62, 350, 440, 64, accent);
-                                text(renderer, fonts.normal,
-                                     state.authenticated ? "Y  刷新设备" : "A  扫码登录", 88, 367,
-                                     {13, 19, 25, 255});
+                                prompts.draw(renderer, fonts.normal, 84, 366,
+                                             {{state.authenticated ? ButtonIcon::Y : confirmIcon,
+                                               state.authenticated ? "刷新设备" : "扫码登录"}}, {13, 19, 25, 255});
                                 if (!state.authenticated)
-                                    text(renderer, fonts.normal, "X  短信验证码登录", 62, 450, accent);
+                                    prompts.draw(renderer, fonts.normal, 62, 446, {{ButtonIcon::X, "短信验证码登录"}}, accent);
                             }
                             rect(renderer, 718, 237, 356, 214, {28, 40, 49, 255});
                             rect(renderer, 729, 248, 334, 192, {17, 25, 33, 255});
@@ -670,11 +843,14 @@ int main(int, char **) {
                             statusText(renderer, fonts.small, state.detail,
                                        state.stage == "error" ? SDL_Color{255, 157, 141, 255} : muted);
                         rect(renderer, 62, 653, 1156, 1, {44, 56, 67, 255});
-                        text(renderer, fonts.small,
-                             state.authenticated ? "A 确认    B 返回    Y 刷新    X 退出账号"
-                                                 : "A 确认    B 返回    X 切换登录方式",
-                             62, 675, muted);
-                        text(renderer, fonts.small, "+ 退出", 1120, 675, muted);
+                        if (state.authenticated)
+                            prompts.draw(renderer, fonts.small, 62, 667,
+                                         {{confirmIcon, "确认"}, {backIcon, "返回"}, {ButtonIcon::Y, "刷新"},
+                                          {ButtonIcon::X, "退出账号"}});
+                        else
+                            prompts.draw(renderer, fonts.small, 62, 667,
+                                         {{confirmIcon, "确认"}, {backIcon, "返回"}, {ButtonIcon::X, "切换登录方式"}});
+                        prompts.draw(renderer, fonts.small, 1100, 667, {{exitIcon, "退出"}});
                     }
                     SDL_RenderPresent(renderer);
                 }

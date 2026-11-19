@@ -1,7 +1,10 @@
 #include "controller_input.hpp"
+#include "remote_keyboard.hpp"
 #include <initializer_list>
 #include <iostream>
 #include <stdexcept>
+#include <utility>
+#include <vector>
 
 namespace {
 constexpr uint64_t zr = 1, key = 2;
@@ -76,6 +79,32 @@ void resumeAfterRelease() {
     check(state.held == (zr | key) && state.changed == state.held && state.leftChanged && state.touchMove,
           "Controls stayed blocked after being released");
 }
+
+void remoteKeyboard() {
+    uu::RemoteKeyboard keyboard;
+    std::vector<std::pair<int, bool>> events;
+    const auto send = [&](int code, bool down) { events.emplace_back(code, down); };
+    const auto tap = [&](int row, int column) {
+        const auto key = uu::RemoteKeyboard::bounds(row, column);
+        check(keyboard.selectAt(key.x + key.width / 2, key.y + key.height / 2), "Key touch missed its cell");
+        keyboard.press(send);
+    };
+
+    keyboard.move(1, 0);
+    keyboard.press(send);
+    check(events == std::vector<std::pair<int, bool>>{{'W', true}, {'W', false}}, "Arrow navigation selected the wrong key");
+    events.clear();
+    tap(4, 0); // Ctrl
+    tap(3, 0); // Shift
+    check(events.empty() && keyboard.armed(0x11) && keyboard.armed(0x10),
+          "Choosing modifiers sent a premature key press");
+    tap(2, 1); // A
+    check(events == std::vector<std::pair<int, bool>>{{0x11, true}, {0x10, true}, {'A', true},
+                                                     {'A', false}, {0x10, false}, {0x11, false}},
+          "Modified key did not release every pressed key in order");
+    check(!keyboard.armed(0x11) && !keyboard.armed(0x10), "Modifiers leaked into the next key");
+    check(!keyboard.selectAt(10, 10), "A touch outside the keyboard selected a key");
+}
 } // namespace
 
 int main() {
@@ -83,6 +112,7 @@ int main() {
         leftButtonSources();
         dragContactAndBounds();
         resumeAfterRelease();
+        remoteKeyboard();
     } catch (const std::exception &error) {
         std::cerr << error.what() << '\n';
         return 1;

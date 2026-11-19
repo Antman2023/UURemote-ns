@@ -8,7 +8,7 @@
 
 namespace uu {
 struct Snapshot {
-    std::string stage = "idle", detail = "按 A 扫码登录，或按 X 使用短信验证码", qrUrl, nickname;
+    std::string stage = "idle", detail = "扫码登录，或使用短信验证码", qrUrl, nickname;
     Json devices = Json::array();
     bool authenticated = false, streaming = false;
     uint64_t inputGeneration = 0;

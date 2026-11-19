@@ -11,7 +11,7 @@
 [**下载最新版**](https://github.com/Antman2023/UURemote-ns/releases/latest) · [安装使用](#安装使用) · [按键操作](#按键操作) · [源码构建](#源码构建) · [开发记录](docs/development.md)
 
 > **当前为实验版，串流仍需 Switch 真机联调。**
-> v0.1.8 修复中文缺字、二维码登录和 Eden 中的 WebRTC 连接，并为 Eden 提供 H.264 软件解码选项。已在 Eden 验证扫码连接、音频播放、WebRTC 回环及合成画面显示。Switch 真机串流仍待复测。
+> v0.1.9 增加串流内远程键盘，并将包括减号在内的按键提示改成内置图片。已用 Eden 合成串流验证按键图片以及键盘的打开和关闭，Switch 真机仍待复测。
 
 ## 功能与验证状态
 
@@ -45,9 +45,9 @@
 
 准备一台能够运行自制程序的 Nintendo Switch，以及已安装原版 UU远程的电脑和手机。Switch 需要联网；手机与电脑使用同一个 UU 账号。
 
-1. 下载 [SD 卡安装包](https://github.com/Antman2023/UURemote-ns/releases/download/v0.1.8/UURemote-ns-0.1.8-switch.zip)，解压到 SD 卡根目录；更新时覆盖原 NRO。
+1. 下载 [SD 卡安装包](https://github.com/Antman2023/UURemote-ns/releases/download/v0.1.9/UURemote-ns-0.1.9-switch.zip)，解压到 SD 卡根目录；更新时覆盖原 NRO。
 2. 在电脑上打开**原版 UU远程电脑端**，登录账号并保持在线。
-3. 更新后先退出旧程序。在 Switch 上按住 **R** 启动一个游戏，进入完整内存模式的 hbmenu，再打开 **UU Remote NS**。首页应显示 **v0.1.8**；若没有，请检查是否启动了其他目录的旧副本。不支持相册小程序模式。
+3. 更新后先退出旧程序。在 Switch 上按住 **R** 启动一个游戏，进入完整内存模式的 hbmenu，再打开 **UU Remote NS**。首页应显示 **v0.1.9**；若没有，请检查是否启动了其他目录的旧副本。不支持相册小程序模式。
 4. 按 **A** 获取大尺寸二维码，使用手机官方 UU远程 App 扫码并确认；也可按 **X** 切换短信登录，输入区号、手机号，发送验证码后输入 6 位验证码并选择「登录」。短信界面用 **↑ / ↓** 选择项目，**A** 打开系统数字键盘或确认，重发需等待 60 秒。
 5. 选择列表中的在线电脑，按 **A** 连接；远程桌面中按 **−** 断开。
 
@@ -60,7 +60,7 @@ SD 卡根目录/
         └── UURemote-ns.nro
 ```
 
-也可下载 [单独的 NRO](https://github.com/Antman2023/UURemote-ns/releases/download/v0.1.8/UURemote-ns.nro)，手动放到上述目录。[SHA256SUMS](https://github.com/Antman2023/UURemote-ns/releases/download/v0.1.8/SHA256SUMS) 用于校验 NRO 和安装包。
+也可下载 [单独的 NRO](https://github.com/Antman2023/UURemote-ns/releases/download/v0.1.9/UURemote-ns.nro)，手动放到上述目录。[SHA256SUMS](https://github.com/Antman2023/UURemote-ns/releases/download/v0.1.9/SHA256SUMS) 用于校验 NRO 和安装包。
 
 使用新版 NRO 在 Eden 中测试时，可以在模拟 SD 卡的 `switch/UURemote-ns/` 下创建空文件 `software-video`（无扩展名）并重启客户端。此模式使用软件解码，适用于 NVDEC 模拟出现绿屏、花屏或无画面的情况。移除该文件后恢复自动选择。
 
@@ -79,6 +79,8 @@ SD 卡根目录/
 | 远程桌面 | ZR / ZL | 鼠标左键 / 右键 |
 | 远程桌面 | 触屏 | 移动鼠标，按住拖动；画面黑边不发送输入 |
 | 远程桌面 | 右摇杆上下 | 滚轮 |
+| 远程桌面 | 按下右摇杆 | 打开或关闭远程键盘 |
+| 远程键盘 | 方向键 · A · B | 选键 · 输入 · 关闭，也可触屏点按 |
 | 远程桌面 | A / B / X / Y | Enter / Esc / Space / Tab |
 | 远程桌面 | ↑ / ↓ / ← / → | W / S / A / D |
 | 远程桌面 | L / R | Ctrl / Shift |
@@ -136,7 +138,7 @@ python3 scripts/package.py
 | 路径 | 内容 |
 | --- | --- |
 | `build-nx/UURemote-ns.nro` | Switch 可执行文件 |
-| `dist/UURemote-ns-0.1.8-switch.zip` | 按 SD 卡目录排好的 NRO 和许可证 |
+| `dist/UURemote-ns-0.1.9-switch.zip` | 按 SD 卡目录排好的 NRO 和许可证 |
 | `dist/SHA256SUMS` | NRO 与安装包校验值 |
 
 第三方源码版本与 SHA256 记录在 [sources.lock.json](scripts/sources.lock.json)，Windows 工具链包记录在 [sdk-windows.lock.json](scripts/sdk-windows.lock.json)。依赖下载到 `external/`，Horizon 平台补丁由 [patch_deps.py](scripts/patch_deps.py) 应用。
@@ -188,7 +190,7 @@ python scripts/bootstrap_native_sdk.py
 
 构建脚本会运行真实 H.264 解码和错误清理测试。启动前需已有从参考 APK 提取的 `romfs/signing.key`；运行时默认使用 Windows 微软雅黑，也可通过 `UU_FONT` 指定字体文件。
 
-按 Enter 确认、方向键选择电脑、Esc 返回、Y 刷新、F2 断开、F10 退出。当前本机登录使用二维码，短信数字输入界面尚未实现。Windows 版已完成扫码登录、与原版电脑端建立 ICE / DTLS / SCTP、显示远程画面和两次断开重连；真实声音播放、完整输入语义和 Switch 真机仍需继续验证。
+按 Enter 确认、方向键选择电脑、Esc 返回、Y 刷新、F2 断开、F3 打开远程键盘、F10 退出。当前本机登录使用二维码，短信数字输入界面尚未实现。Windows 版已完成扫码登录、与原版电脑端建立 ICE / DTLS / SCTP、显示远程画面和两次断开重连；真实声音播放、完整输入语义和 Switch 真机仍需继续验证。
 
 v0.1.7 包含事件恢复、媒体清理、计时和音频错误提示修复。所有日志和账号状态均留在本地，测试素材只使用合成画面。
 
