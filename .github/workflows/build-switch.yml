@@ -2,7 +2,6 @@ name: Build Switch
 
 on:
   push:
-    branches: [main]
     tags: ['v[0-9]+.[0-9]+.[0-9]+']
   pull_request:
     branches: [main]
@@ -29,7 +28,7 @@ jobs:
       release_tag: ${{ steps.source.outputs.tag }}
       commit: ${{ steps.source.outputs.commit }}
     env:
-      PACKAGE_SWITCH: ${{ (github.ref == 'refs/heads/main' && github.event_name != 'pull_request') || (github.event_name == 'push' && github.ref_type == 'tag') }}
+      PACKAGE_SWITCH: ${{ (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') || (github.event_name == 'push' && github.ref_type == 'tag') }}
     steps:
       - name: Check out source
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -65,24 +64,18 @@ jobs:
               if ($push) { throw 'The tag no longer points to the triggering commit.' }
               git checkout --detach $target
               if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-              # Dispatch uses the current packaging rules and the tagged application source.
-              git restore --source=$commit --worktree -- scripts/package.py
+              # Dispatch uses the current SDK installer and packaging rules with the tagged application source.
+              git restore --source=$commit --worktree -- scripts/bootstrap_sdk.py scripts/package.py
               if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
               $commit = $target
             }
-          }
 
-          if ($tag -or ($main -and $push)) {
             $project = Get-Content -LiteralPath CMakeLists.txt -Raw
             if ($project -notmatch '(?m)^project\(UURemote-ns VERSION ([0-9]+\.[0-9]+\.[0-9]+)[\s)]') {
               throw 'Could not read the project version from CMakeLists.txt.'
             }
             $expected = 'v' + $Matches[1]
-            if ($tag -and $tag -cne $expected) { throw "Tag $tag must match the CMake version ($expected)." }
-            if (!$tag) {
-              $tagCommit = git rev-parse --verify --quiet "refs/tags/$expected^{commit}"
-              if ($LASTEXITCODE -eq 0 -and $tagCommit -eq $commit) { $tag = $expected }
-            }
+            if ($tag -cne $expected) { throw "Tag $tag must match the CMake version ($expected)." }
           }
 
           "tag=$tag" >> $env:GITHUB_OUTPUT
