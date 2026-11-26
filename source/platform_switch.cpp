@@ -1,3 +1,4 @@
+#include "diagnostics.hpp"
 #include "switch_compat/poll.hpp"
 #include <arpa/inet.h>
 #include <cstddef>
@@ -10,6 +11,18 @@
 
 extern "C" int __real_poll(struct pollfd *, nfds_t, int);
 extern "C" int __real_getnameinfo(const sockaddr *, socklen_t, char *, socklen_t, char *, socklen_t, int);
+
+extern "C" void uu_log_udp_receive_buffer(int socket) {
+    int size = 0;
+    socklen_t length = sizeof(size);
+    if (getsockopt(socket, SOL_SOCKET, SO_RCVBUF, &size, &length) != 0 || length != sizeof(size)) {
+        uu::diagnostic("ice-udp-rx-buffer-unavailable");
+        return;
+    }
+    char event[64];
+    std::snprintf(event, sizeof(event), "ice-udp-rx-buffer-%d", size);
+    uu::diagnostic(event);
+}
 
 extern "C" int __wrap_poll(struct pollfd *sockets, nfds_t count, int timeout) {
     // libnx forwards negative entries and input revents to the service. Some

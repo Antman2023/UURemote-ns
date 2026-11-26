@@ -22,8 +22,8 @@ class Media {
     enum class VideoDecoder { Automatic, Software };
     explicit Media(VideoDecoder videoDecoder = VideoDecoder::Automatic);
     ~Media();
-    // An empty frame reports RTP loss. Returns true when a fresh keyframe is due.
-    bool video(const uint8_t *data, size_t size, uint64_t generation);
+    // An empty frame reports RTP loss. The client worker handles keyframe requests.
+    void video(const uint8_t *data, size_t size, uint64_t generation);
     bool takeVideoKeyframeRequest();
     void audio(const uint8_t *data, size_t size, uint64_t generation);
     uint64_t generation() const;

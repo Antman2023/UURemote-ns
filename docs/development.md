@@ -155,6 +155,10 @@ SDL 音频设备打开失败时仍允许视频串流，但状态栏现在明确�
 
 媒体回归测试验证真实 Opus 解码产生的 20 ms 双声道 PCM 已送入 SDL、旧连接音频被丢弃，以及设备打开失败不影响视频输出、入队失败可见且成功后恢复。测试使用 SDL dummy 音频驱动，不能证明扬声器实际发声。
 
+## v0.1.11 真机接收缓冲
+
+Switch 在初始化 libnx 网络服务时将 UDP 接收缓冲配置为 256 KiB，初始化失败时回退到默认配置。`connection.log` 的 `udp-rx-config-*` 记录初始化结果，`ice-udp-rx-buffer-*` 记录 ICE 套接字读回的 `SO_RCVBUF` 字节数。视频接收回调只提交帧或丢包通知，关键帧请求和日志由客户端工作线程处理。
+
 ## 参考
 
 - 参考项目 `UURemote-web` 中的 `server/uu-api.mjs`、`public/lib/streamer.js`、`public/lib/protocol.js`、`public/lib/protobuf.js`。

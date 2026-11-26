@@ -492,14 +492,10 @@ void Client::beginPeer(const Json &result) {
     depacketizer->addToChain(std::make_shared<rtc::RtcpReceivingSession>());
     video_->setMediaHandler(depacketizer);
     std::weak_ptr<Media> media = media_;
-    std::weak_ptr<rtc::Track> video = video_;
     auto mediaGeneration = media_->generation();
-    video_->onFrame([media, video, mediaGeneration](rtc::binary data, rtc::FrameInfo) {
-        auto m = media.lock();
-        if (!m || !m->video(reinterpret_cast<const uint8_t *>(data.data()), data.size(), mediaGeneration))
-            return;
-        if (auto track = video.lock(); track && track->isOpen())
-            requestVideoKeyframe(*track);
+    video_->onFrame([media, mediaGeneration](rtc::binary data, rtc::FrameInfo) {
+        if (auto m = media.lock())
+            m->video(reinterpret_cast<const uint8_t *>(data.data()), data.size(), mediaGeneration);
     });
     rtc::Description::Audio a("1", rtc::Description::Direction::RecvOnly);
     diagnostic("rtc-audio");

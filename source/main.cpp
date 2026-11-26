@@ -319,7 +319,13 @@ int main(int, char **) {
         consoleExit(nullptr);
         return 0;
     }
-    socketInitializeDefault();
+    auto socketConfig = *socketGetDefaultInitConfig();
+    // Video packet bursts can overflow libnx's default UDP receive buffer.
+    socketConfig.udp_rx_buf_size = 256 * 1024;
+    Result socketResult = socketInitialize(&socketConfig);
+    const bool usingDefaultSocketConfig = R_FAILED(socketResult);
+    if (usingDefaultSocketConfig)
+        socketResult = socketInitializeDefault();
     nifmInitialize(NifmServiceType_User);
     romfsInit();
     plInitialize(PlServiceType_User);
@@ -331,6 +337,10 @@ int main(int, char **) {
 #endif
     int result = 0;
     try {
+#ifdef __SWITCH__
+        if (R_FAILED(socketResult))
+            throw std::runtime_error("无法初始化网络，错误码 " + std::to_string(socketResult));
+#endif
         if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER | SDL_INIT_EVENTS) != 0)
             throw std::runtime_error(SDL_GetError());
         if (TTF_Init() != 0)
@@ -363,6 +373,9 @@ int main(int, char **) {
             if (key.size() != 24)
                 throw std::runtime_error("Missing signing.key: run scripts/extract_key.py and rebuild");
             uu::diagnostic("app-start-" UU_VERSION);
+#ifdef __SWITCH__
+            uu::diagnostic(usingDefaultSocketConfig ? "udp-rx-config-default" : "udp-rx-config-262144");
+#endif
             std::set_terminate(uu::terminateWithDiagnostics);
             rtc::InitLogger(rtc::LogLevel::Info, [](rtc::LogLevel, const std::string &message) {
                 const auto event = uu::rtcLogEvent(message);
@@ -893,7 +906,8 @@ int main(int, char **) {
     plExit();
     romfsExit();
     nifmExit();
-    socketExit();
+    if (R_SUCCEEDED(socketResult))
+        socketExit();
 #endif
     return result;
 }

@@ -199,7 +199,8 @@ int main(int argc, char **argv) {
             check(media.picture(0) == good, "Decoder error replaced the last good picture");
             check(media.takeVideoKeyframeRequest(), "Decoder error did not request a keyframe");
             check(!media.takeVideoKeyframeRequest(), "Decoder keyframe request was not rate limited");
-            check(!media.video(nullptr, 0, generation), "RTP loss bypassed the decoder request limit");
+            media.video(nullptr, 0, generation);
+            check(!media.takeVideoKeyframeRequest(), "RTP loss bypassed the decoder request limit");
             media.video(frame.data(), frame.size(), generation);
             waitFor([&] { return media.picture(good->serial) != nullptr; });
             check(media.status().empty(), "Clean keyframe did not end recovery");
@@ -210,8 +211,10 @@ int main(int argc, char **argv) {
             media.video(frame.data(), frame.size(), generation);
             waitFor([&] { return media.picture(0) != nullptr; });
             const auto good = media.picture(0);
-            check(!media.video(nullptr, 0, generation - 1), "Stale RTP loss requested a keyframe");
-            check(media.video(nullptr, 0, generation), "RTP loss did not request a keyframe");
+            media.video(nullptr, 0, generation - 1);
+            check(!media.takeVideoKeyframeRequest(), "Stale RTP loss requested a keyframe");
+            media.video(nullptr, 0, generation);
+            check(media.takeVideoKeyframeRequest(), "RTP loss did not request a keyframe");
             check(media.picture(0) == good, "RTP loss cleared the last good picture");
             media.video(frame.data(), frame.size(), generation);
             waitFor([&] { return media.picture(good->serial) != nullptr; });
@@ -224,15 +227,15 @@ int main(int argc, char **argv) {
                 feed(media, frame, generation);
                 waitFor([] { return scalerPaused.load(); });
                 int requests = 0;
-                for (int i = 0; i < 24; ++i)
-                    requests += media.video(frame.data(), frame.size(), generation);
+                for (int i = 0; i < 24; ++i) {
+                    media.video(frame.data(), frame.size(), generation);
+                    requests += media.takeVideoKeyframeRequest();
+                }
                 check(requests == 1, "Video overload did not request exactly one keyframe");
                 std::this_thread::sleep_for(std::chrono::milliseconds(1050));
-                check(!media.video(frame.data(), frame.size(), generation - 1),
-                      "Stale packet requested a keyframe");
-                check(media.video(frame.data(), frame.size(), generation),
+                check(media.takeVideoKeyframeRequest(),
                       "Video recovery did not retry a keyframe request");
-                check(!media.video(frame.data(), frame.size(), generation),
+                check(!media.takeVideoKeyframeRequest(),
                       "Keyframe request retry was not rate limited");
             }
             feed(media, frame, generation);

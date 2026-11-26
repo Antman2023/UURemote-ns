@@ -239,26 +239,20 @@ struct Media::Impl {
 };
 Media::Media(VideoDecoder videoDecoder) : impl_(std::make_unique<Impl>(videoDecoder)) {}
 Media::~Media() = default;
-bool Media::video(const uint8_t *data, size_t size, uint64_t generation) {
+void Media::video(const uint8_t *data, size_t size, uint64_t generation) {
     if (impl_->decoderFailed.load())
-        return false;
+        return;
     const bool dropped = size == 0 || size > 2 * 1024 * 1024;
-    bool requestKeyframe, startedRecovery;
     {
         std::lock_guard lock(impl_->mutex);
         if (generation != impl_->generation.load())
-            return false;
-        startedRecovery = dropped && !impl_->recovering;
+            return;
         if (dropped || impl_->queue.size() >= 8)
             impl_->discardVideo();
         if (!dropped)
             impl_->queue.emplace_back(data, data + size);
-        requestKeyframe = impl_->takeKeyframeRequest();
     }
     impl_->cv.notify_one();
-    if (startedRecovery)
-        diagnostic("video-rtp-frame-dropped");
-    return requestKeyframe;
 }
 bool Media::takeVideoKeyframeRequest() {
     std::lock_guard lock(impl_->mutex);

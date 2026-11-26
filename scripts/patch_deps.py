@@ -20,6 +20,13 @@ replace(Path('deps/libjuice/src/udp.c'),
 #else
 \tsocket_t sock = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
 #endif''')
+# Read back the effective socket buffer after the existing request.
+replace(Path('deps/libjuice/src/udp.c'),
+        '\tsetsockopt(sock, SOL_SOCKET, SO_RCVBUF, (const char *)&buffer_size, sizeof(buffer_size));', '''\tsetsockopt(sock, SOL_SOCKET, SO_RCVBUF, (const char *)&buffer_size, sizeof(buffer_size));
+#ifdef __SWITCH__
+\textern void uu_log_udp_receive_buffer(int socket);
+\tuu_log_udp_receive_buffer(sock);
+#endif''')
 # The default bind address is a local socket wildcard and needs no DNS service.
 replace(Path('deps/libjuice/src/udp.c'), 'socket_t udp_create_socket(const udp_socket_config_t *config) {', '''socket_t udp_create_socket(const udp_socket_config_t *config) {
 #ifdef __SWITCH__
